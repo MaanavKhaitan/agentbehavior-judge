@@ -38,7 +38,7 @@ trajectory, a `{trajectory, expected}` wrapper (`expected` holds the known verdi
 ## The IR
 
 The checked-in reference IR for the
-[`primary-source-tax-research`](../../examples/.agents/behaviors/primary-source-tax-research/BEHAVIOR.md)
+[`primary-source-tax-research`](examples/primary-source-tax-research/BEHAVIOR.md)
 example spec:
 
 ```yaml
@@ -113,13 +113,15 @@ any `false` → `false`; all `na` → `na`; else `true`.
 
 ## Walkthrough (tax fixtures)
 
-From the repo root, with the fixture trajectory exported to JSON (the test suite's
-`skill-read-too-late` case, where the agent opens a source before reading the skill):
+[`examples/primary-source-tax-research/`](examples/primary-source-tax-research/) carries
+the example spec, its reference IR, and the six tax-research fixture trajectories as
+JSON. From the repo root (`skill-read-too-late` is the case where the agent opens a
+source before reading the skill):
 
 ```console
 $ behavior-judge judge \
-    examples/.agents/behaviors/primary-source-tax-research/judge.yaml \
-    skill-read-too-late.json --no-verify
+    examples/primary-source-tax-research/judge.yaml \
+    examples/primary-source-tax-research/skill-read-too-late.json --no-verify
 skill-read-too-late: false
   Read the tax research skill before beginning source research: false
     predicate "the agent first reads the tax research skill, before searching or opening a source": false [event-2] (unverified)
@@ -132,10 +134,13 @@ skill read — with no LLM in the loop. With `BRAINTRUST_API_KEY` set, drop `--n
 the verifier confirms the violation, the semantic trigger for the second meta-behavior
 fires, and its clauses get judged too.
 
-To measure the IR against trajectories with known verdicts:
+To measure the IR against trajectories with known verdicts (with `BRAINTRUST_API_KEY`
+set — the semantic clauses need the LLM to reach the expected verdicts):
 
 ```console
-$ behavior-judge calibrate judge.yaml cases.json
+$ behavior-judge calibrate \
+    examples/primary-source-tax-research/judge.yaml \
+    examples/primary-source-tax-research/trajectories.json
 secondary-then-primary: file expected true, got true — ok
   Read the tax research skill before beginning source research: expected true, got true — ok
 ...
@@ -163,6 +168,10 @@ written next to your `BEHAVIOR.md` (or to `--out`).
 Hand-writing `judge.yaml` is equally supported; `generate` is a convenience, not a
 requirement.
 
+`generate` reads the spec's frontmatter (`name`, `description`) and markdown body
+directly. To lint a spec against the full Agent Behavior standard, use the
+[`agentbehavior` validator CLI](https://github.com/braintrustdata/agentbehavior).
+
 ## Library use
 
 ```ts
@@ -175,3 +184,24 @@ const judgment = await judgeTrajectory({ ir, trajectory: trajectoryCase.trajecto
 
 `judgeTrajectory` accepts a `complete` injection seam (`(messages) => Promise<string>`) so
 tests and evals can run without a network.
+
+## Development
+
+Requires Node >= 20 and [pnpm](https://pnpm.io).
+
+```console
+$ pnpm install
+$ pnpm build   # vp pack → dist/
+$ pnpm test    # vp test --run
+$ pnpm check   # vp check (fmt + lint)
+```
+
+After a build the CLI runs as `node dist/cli.mjs`, or `pnpm link --global` puts
+`behavior-judge` on your PATH.
+
+## License
+
+Apache-2.0 (see [LICENSE](LICENSE)). Built as a companion to the
+[Agent Behavior standard](https://github.com/braintrustdata/agentbehavior); the example
+spec, the tax-research fixture data, and the Braintrust Gateway client derive from that
+repo's examples (also Apache-2.0).
