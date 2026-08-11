@@ -115,13 +115,14 @@ any `false` → `false`; all `na` → `na`; else `true`.
 
 [`examples/primary-source-tax-research/`](examples/primary-source-tax-research/) carries
 the example spec, its reference IR, and the six tax-research fixture trajectories as
-JSON. From the repo root (`skill-read-too-late` is the case where the agent opens a
-source before reading the skill):
+per-case `{trajectory, expected}` JSON files under `trajectories/`. From the repo root
+(`skill-read-too-late` is the case where the agent opens a source before reading the
+skill):
 
 ```console
 $ behavior-judge judge \
     examples/primary-source-tax-research/judge.yaml \
-    examples/primary-source-tax-research/skill-read-too-late.json --no-verify
+    examples/primary-source-tax-research/trajectories/skill-read-too-late.json --no-verify
 skill-read-too-late: false
   Read the tax research skill before beginning source research: false
     predicate "the agent first reads the tax research skill, before searching or opening a source": false [event-2] (unverified)
@@ -140,7 +141,7 @@ set — the semantic clauses need the LLM to reach the expected verdicts):
 ```console
 $ behavior-judge calibrate \
     examples/primary-source-tax-research/judge.yaml \
-    examples/primary-source-tax-research/trajectories.json
+    examples/primary-source-tax-research/trajectories/*.json
 secondary-then-primary: file expected true, got true — ok
   Read the tax research skill before beginning source research: expected true, got true — ok
 ...
@@ -199,9 +200,13 @@ $ pnpm check   # vp check (fmt + lint)
 After a build the CLI runs as `node dist/cli.mjs`, or `pnpm link --global` puts
 `behavior-judge` on your PATH.
 
-## License
+## Credits and license
 
-Apache-2.0 (see [LICENSE](LICENSE)). Built as a companion to the
-[Agent Behavior standard](https://github.com/braintrustdata/agentbehavior); the example
-spec, the tax-research fixture data, and the Braintrust Gateway client derive from that
-repo's examples (also Apache-2.0).
+This project is built on the
+[Agent Behavior standard](https://github.com/braintrustdata/agentbehavior) by
+[Braintrust](https://github.com/braintrustdata) — the `BEHAVIOR.md` spec format, the
+validator, and the original examples all live there. The example spec, the tax-research
+fixture data, and the Braintrust Gateway client in this repo derive from that project's
+examples.
+
+Apache-2.0 (see [LICENSE](LICENSE)), same as the upstream Agent Behavior repo.

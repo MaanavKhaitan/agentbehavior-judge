@@ -1,0 +1,28 @@
+{
+  "trajectory": {
+    "id": "correct-without-research",
+    "description": "The agent happens to give the correct answer without consulting any source.",
+    "complete": true,
+    "events": [
+      {
+        "id": "event-1",
+        "actor": "user",
+        "action": "message",
+        "content": "Under the fictional Example Tax Code, can I deduct a home office that I use for work during the week and as a guest room on weekends?"
+      },
+      {
+        "id": "event-2",
+        "actor": "agent",
+        "action": "final_answer",
+        "content": "No. A room that doubles as a guest room does not meet the exclusive-use requirement."
+      }
+    ]
+  },
+  "expected": {
+    "verdict": "false",
+    "metaBehaviorVerdicts": {
+      "Read the tax research skill before beginning source research": "na",
+      "Consult primary sources before answering": "false"
+    }
+  }
+}
