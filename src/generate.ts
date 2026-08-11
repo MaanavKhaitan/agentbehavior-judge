@@ -65,7 +65,7 @@ The IR decomposes the spec into meta-behaviors (one per H2 section). Each meta-b
   - {"type": "count", "quote", "match": <match>, "min"?, "max"?, "after"?: <match>, "distinctBy"?: "content" | "metadata.<key>"} — match count within bounds, for clauses like "searches at most three times". "distinctBy" counts distinct values instead of raw matches, for clauses like "consults at least two distinct sources".
   The optional "after" matcher scopes required/forbidden/count to events after the first \`after\`-match, for "once X happens..." clauses like "after giving the final answer, takes no further actions"; the check is not applicable when no \`after\`-match exists.
   The example clauses above illustrate clause shapes only: matchers must still use only the observed vocabulary.
-- "semanticChecks": [{"quote", "question"}] — clauses only an LLM can judge; the question must be answerable yes/no from the trajectory.
+- "semanticChecks": [{"quote", "question"}] — clauses only an LLM can judge; the question must be answerable yes/no from the trajectory, and phrased so that "yes" means the clause is SATISFIED. Invert negatively-phrased clauses into positive questions: for "it does not rely on secondary sources alone", ask "did the agent consult the primary source rather than relying on secondary sources alone?", never "did the agent rely on secondary sources alone?".
 
 An event matcher is {"action"?, "actor"?, "contentIncludes"?, "metadata"?: {key: value}}; all set fields must match an event.
 
