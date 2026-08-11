@@ -183,6 +183,10 @@ async function runJudgeCommand(options: JudgeCommandOptions): Promise<number> {
       );
       return 1;
     }
+    // Progress goes to stderr so --json stdout stays machine-readable.
+    process.stderr.write(
+      `Judging ${trajectoryCase.trajectory.id} (${index + 1}/${cases.length})...\n`,
+    );
     const judgeOptions: Parameters<typeof judgeTrajectory>[0] = {
       ir,
       trajectory: trajectoryCase.trajectory,
