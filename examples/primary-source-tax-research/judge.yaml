@@ -1,0 +1,34 @@
+version: 1
+behavior: primary-source-tax-research
+metaBehaviors:
+  - name: Read the tax research skill before beginning source research
+    trigger:
+      description: The agent begins source research.
+      match:
+        - action: web_search
+        - action: open_url
+    checks:
+      - type: ordering
+        quote: the agent first reads the tax research skill, before searching or opening a source
+        first:
+          action: read_skill
+        before:
+          - action: web_search
+          - action: open_url
+    semanticChecks: []
+  - name: Consult primary sources before answering
+    trigger:
+      description: The agent answers a tax question.
+      semantic: true
+    checks:
+      - type: ordering
+        quote: Before deciding on the answer, it reads the relevant primary source
+        first:
+          action: open_url_result
+          metadata:
+            sourceType: primary
+        before:
+          action: final_answer
+    semanticChecks:
+      - quote: bases its conclusion on that source
+        question: Does the final answer base its conclusion on the primary source the agent read?

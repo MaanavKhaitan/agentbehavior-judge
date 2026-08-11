@@ -277,10 +277,7 @@ describe("judgeTrajectory orchestration", () => {
 describe("checked-in tax reference IR", () => {
   async function loadTaxIr(): Promise<JudgeIr> {
     const source = await readFile(
-      new URL(
-        "../../../examples/.agents/behaviors/primary-source-tax-research/judge.yaml",
-        import.meta.url,
-      ),
+      new URL("../examples/primary-source-tax-research/judge.yaml", import.meta.url),
       "utf8",
     );
     return parseIr(source);
