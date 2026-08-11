@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  enforceVocabulary,
   extractMetaBehaviorNames,
   extractVocabulary,
   runInterview,
+  unobservedInCheck,
+  unobservedInTrigger,
+  vocabularySets,
   type InterviewDeps,
 } from "./generate.js";
-import type { JudgeIr } from "./ir.js";
 import { taxCase } from "./taxFixtures.js";
 
 const behaviorBody = `# Primary-source tax research
@@ -114,106 +115,69 @@ describe("extractMetaBehaviorNames", () => {
   });
 });
 
-describe("enforceVocabulary", () => {
-  it("demotes matchers that reference unknown actions to semantic checks", () => {
-    const ir: JudgeIr = {
-      version: 1,
-      behavior: "test",
-      metaBehaviors: [
-        {
-          name: "Meta A",
-          trigger: { description: "Searches.", match: { action: "web_search" } },
-          checks: [
-            {
-              type: "required",
-              quote: "cites the docs",
-              match: { action: "cite_docs" },
-            },
-          ],
-          semanticChecks: [],
-        },
-      ],
-    };
+describe("unobserved vocabulary flagging", () => {
+  const sets = vocabularySets(extractVocabulary(trajectories));
 
-    const { ir: enforced, notices } = enforceVocabulary(ir, extractVocabulary(trajectories));
-
-    expect(notices).toHaveLength(1);
-    expect(notices[0]).toMatchObject({ metaBehavior: "Meta A", demoted: "required check" });
-    expect(enforced.metaBehaviors[0]!.checks).toEqual([]);
-    expect(enforced.metaBehaviors[0]!.semanticChecks).toHaveLength(1);
-    expect(enforced.metaBehaviors[0]!.semanticChecks[0]!.quote).toBe("cites the docs");
+  it("flags checks that reference unknown actions", () => {
+    expect(
+      unobservedInCheck(
+        { type: "required", quote: "cites the docs", match: { action: "cite_docs" } },
+        sets,
+      ),
+    ).toEqual(["action `cite_docs`"]);
+    expect(
+      unobservedInCheck(
+        { type: "required", quote: "searches", match: { action: "web_search" } },
+        sets,
+      ),
+    ).toEqual([]);
   });
 
-  it("demotes triggers that reference unknown metadata keys to semantic triggers", () => {
-    const ir: JudgeIr = {
-      version: 1,
-      behavior: "test",
-      metaBehaviors: [
-        {
-          name: "Meta A",
-          trigger: {
-            description: "Searches.",
-            match: { action: "web_search", metadata: { region: "us" } },
-          },
-          checks: [{ type: "required", quote: "searches", match: { action: "web_search" } }],
-          semanticChecks: [],
-        },
-      ],
-    };
-
-    const { ir: enforced, notices } = enforceVocabulary(ir, extractVocabulary(trajectories));
-
-    expect(notices[0]).toMatchObject({ demoted: "trigger" });
-    expect(enforced.metaBehaviors[0]!.trigger).toEqual({
-      description: "Searches.",
-      semantic: true,
-    });
+  it("flags triggers that reference unknown metadata keys", () => {
+    expect(
+      unobservedInTrigger(
+        { description: "Searches.", match: { action: "web_search", metadata: { region: "us" } } },
+        sets,
+      ),
+    ).toEqual(["metadata key `region`"]);
+    expect(unobservedInTrigger({ description: "Searches.", semantic: true }, sets)).toEqual([]);
   });
 
-  it("demotes pairing, after, and distinctBy references to unknown vocabulary", () => {
-    const ir: JudgeIr = {
-      version: 1,
-      behavior: "test",
-      metaBehaviors: [
+  it("flags pairing, after, and distinctBy references to unknown vocabulary", () => {
+    expect(
+      unobservedInCheck(
         {
-          name: "Meta A",
-          trigger: { description: "Searches.", match: { action: "web_search" } },
-          checks: [
-            {
-              type: "pairing",
-              quote: "handles every tool error",
-              each: { action: "tool_error" },
-              followedBy: { action: "web_search" },
-            },
-            {
-              type: "required",
-              quote: "reports after failing",
-              match: { action: "web_search" },
-              after: { action: "tool_error" },
-            },
-            {
-              type: "count",
-              quote: "consults two distinct venues",
-              match: { action: "open_url_result" },
-              min: 2,
-              distinctBy: "metadata.venue",
-            },
-          ],
-          semanticChecks: [],
+          type: "pairing",
+          quote: "handles every tool error",
+          each: { action: "tool_error" },
+          followedBy: { action: "web_search" },
         },
-      ],
-    };
-
-    const { ir: enforced, notices } = enforceVocabulary(ir, extractVocabulary(trajectories));
-
-    expect(notices.map((notice) => notice.demoted)).toEqual([
-      "pairing check",
-      "required check",
-      "count check",
-    ]);
-    expect(notices[2]!.problems).toEqual(["metadata key `venue`"]);
-    expect(enforced.metaBehaviors[0]!.checks).toEqual([]);
-    expect(enforced.metaBehaviors[0]!.semanticChecks).toHaveLength(3);
+        sets,
+      ),
+    ).toEqual(["action `tool_error`"]);
+    expect(
+      unobservedInCheck(
+        {
+          type: "required",
+          quote: "reports after failing",
+          match: { action: "web_search" },
+          after: { action: "tool_error" },
+        },
+        sets,
+      ),
+    ).toEqual(["action `tool_error`"]);
+    expect(
+      unobservedInCheck(
+        {
+          type: "count",
+          quote: "consults two distinct venues",
+          match: { action: "open_url_result" },
+          min: 2,
+          distinctBy: "metadata.venue",
+        },
+        sets,
+      ),
+    ).toEqual(["metadata key `venue`"]);
   });
 });
 
@@ -259,12 +223,14 @@ describe("runInterview", () => {
     expect(ir).toBeUndefined();
   });
 
-  it("demotes an out-of-vocabulary matcher and tells the user", async () => {
+  it("warns about an out-of-vocabulary matcher and keeps it when accepted", async () => {
     const badProposal = structuredClone(proposal) as unknown as {
       metaBehaviors: Array<{ checks: Array<Record<string, unknown>> }>;
     };
     badProposal.metaBehaviors[0]!.checks[0]!.first = { action: "invented_action" };
 
+    // Same prompt sequence as the accept-all path: the flagged check gets a
+    // warning line, not an extra prompt.
     const { deps, output } = scriptedDeps(JSON.stringify(badProposal), [
       "y",
       "y",
@@ -279,7 +245,36 @@ describe("runInterview", () => {
       deps,
     );
 
-    expect(output.some((line) => line.includes("demoted ordering check"))).toBe(true);
+    expect(
+      output.some(
+        (line) =>
+          line.includes("warning:") &&
+          line.includes("action `invented_action`") &&
+          line.includes("not observed"),
+      ),
+    ).toBe(true);
+    expect(ir!.metaBehaviors[0]!.checks).toHaveLength(1);
+    expect(ir!.metaBehaviors[0]!.checks[0]).toMatchObject({
+      type: "ordering",
+      first: { action: "invented_action" },
+    });
+  });
+
+  it("demotes an out-of-vocabulary matcher when the user chooses semantic", async () => {
+    const badProposal = structuredClone(proposal) as unknown as {
+      metaBehaviors: Array<{ checks: Array<Record<string, unknown>> }>;
+    };
+    badProposal.metaBehaviors[0]!.checks[0]!.first = { action: "invented_action" };
+
+    // meta 1: trigger y, flagged check s (demote), demoted semantic check y;
+    // meta 2: trigger y, check y, semantic check y; final confirm.
+    const { deps } = scriptedDeps(JSON.stringify(badProposal), ["y", "s", "y", "y", "y", "y", "y"]);
+
+    const ir = await runInterview(
+      { behaviorName: "primary-source-tax-research", behaviorBody, trajectories },
+      deps,
+    );
+
     expect(ir!.metaBehaviors[0]!.checks).toEqual([]);
     expect(
       ir!.metaBehaviors[0]!.semanticChecks.some(

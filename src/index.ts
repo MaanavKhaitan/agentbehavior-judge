@@ -54,11 +54,14 @@ export {
   type Verification,
 } from "./judge.js";
 export {
-  enforceVocabulary,
   extractMetaBehaviorNames,
   extractVocabulary,
   runInterview,
+  unobservedInCheck,
+  unobservedInTrigger,
+  vocabularySets,
   type ActionVocabulary,
   type InterviewDeps,
   type InterviewInput,
+  type VocabularySets,
 } from "./generate.js";

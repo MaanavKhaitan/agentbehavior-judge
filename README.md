@@ -7,9 +7,10 @@ checked-in judge and run it over agent trajectories.
 hand-building judging machinery. `behavior-judge` closes that gap:
 
 - **`generate`** interviews you through compiling a spec into a YAML intermediate
-  representation (`judge.yaml`): deterministic predicate checks bound to the event
-  vocabulary actually observed in your sample trajectories, plus narrowly scoped
-  per-clause LLM checks for the judgment calls.
+  representation (`judge.yaml`): deterministic predicate checks bound to your agent's
+  event vocabulary — verified against sample trajectories, or confirmed by you when the
+  samples don't exhibit it — plus narrowly scoped per-clause LLM checks for the
+  judgment calls.
 - **`judge`** executes an IR over trajectory JSON files. Predicates are free; LLM calls
   are reserved for semantic clauses and for confirming predicate violations.
 - **`calibrate`** measures judge agreement against trajectories with known verdicts.
@@ -79,8 +80,9 @@ metaBehaviors:
 
 Every check carries a verbatim `quote` from the spec, so each verdict traces back to the
 clause it enforces. An event matcher (`action` / `actor` / `contentIncludes` / `metadata`)
-only ever references vocabulary observed in the sample trajectories you gave `generate`;
-clauses that would need vocabulary your traces don't record become semantic checks instead.
+references vocabulary that is either observed in the sample trajectories you gave
+`generate` or explicitly confirmed by you during its interview; clauses that fit neither
+become semantic checks instead.
 
 Predicate semantics (evaluated after the trigger fires):
 
@@ -149,12 +151,14 @@ meta agreement 12/12, file agreement 6/6
 $ behavior-judge generate .agents/behaviors/my-behavior sample-trajectories.json
 ```
 
-`generate` requires at least one sample trajectory: predicates are only proposed for
-actions and metadata keys your traces actually record (never for vocabulary that would
-require re-instrumentation). One LLM call drafts the IR; anything out-of-vocabulary is
-demoted to a semantic check in code, never trusted from the model. You then review each
+`generate` requires at least one sample trajectory: it extracts the event vocabulary your
+traces actually record, and one LLM call drafts the IR against it. You then review each
 piece — accept, demote to semantic, drop, or edit — with matching sample events shown as
-evidence, and the confirmed YAML is written next to your `BEHAVIOR.md` (or to `--out`).
+evidence. A matcher that references vocabulary your samples never exhibit gets a printed
+warning instead of silent trust (common for forbidden or rare behaviors that clean traces
+never show); accepting it is your assertion that the instrumentation emits that event —
+if it doesn't, demote the clause to a semantic check or drop it. The confirmed YAML is
+written next to your `BEHAVIOR.md` (or to `--out`).
 
 Hand-writing `judge.yaml` is equally supported; `generate` is a convenience, not a
 requirement.

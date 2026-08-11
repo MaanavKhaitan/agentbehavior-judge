@@ -64,12 +64,12 @@ The IR decomposes the spec into meta-behaviors (one per H2 section). Each meta-b
   - {"type": "forbidden", "quote", "match": <match>, "after"?: <match>} — no matching event may exist. For clauses like "never contacts external services".
   - {"type": "count", "quote", "match": <match>, "min"?, "max"?, "after"?: <match>, "distinctBy"?: "content" | "metadata.<key>"} — match count within bounds, for clauses like "searches at most three times". "distinctBy" counts distinct values instead of raw matches, for clauses like "consults at least two distinct sources".
   The optional "after" matcher scopes required/forbidden/count to events after the first \`after\`-match, for "once X happens..." clauses like "after giving the final answer, takes no further actions"; the check is not applicable when no \`after\`-match exists.
-  The example clauses above illustrate clause shapes only: matchers must still use only the observed vocabulary.
+  The example clauses above illustrate clause shapes only: do not copy their wording into matchers.
 - "semanticChecks": [{"quote", "question"}] — clauses only an LLM can judge; the question must be answerable yes/no from the trajectory, and phrased so that "yes" means the clause is SATISFIED. Invert negatively-phrased clauses into positive questions: for "it does not rely on secondary sources alone", ask "did the agent consult the primary source rather than relying on secondary sources alone?", never "did the agent rely on secondary sources alone?".
 
 An event matcher is {"action"?, "actor"?, "contentIncludes"?, "metadata"?: {key: value}}; all set fields must match an event.
 
-HARD CONSTRAINT: matchers may only use "action" values and "metadata" keys that appear in the observed vocabulary you are given. A clause whose detection would need any other action or metadata key must become a semantic check instead (or be part of the trigger description for a semantic trigger). Never invent vocabulary.
+VOCABULARY RULE: prefer "action" values and "metadata" keys from the observed vocabulary you are given — those are verified against real traces. When the spec clearly calls for an event the samples do not contain (common for forbidden or rare behaviors that well-behaved samples never exhibit), you may propose a matcher with unobserved vocabulary; it will be flagged for human confirmation during the interview. Only do this when the spec clearly implies the instrumentation records such an event; when detection is genuinely uncertain, use a semantic check instead. Never pad matchers with guessed metadata keys.
 
 Every check and semantic check carries a "quote": a short verbatim excerpt from the spec text that the check enforces.
 
@@ -105,7 +105,7 @@ ${input.behaviorBody}
 
 ${headings}
 
-Observed event vocabulary (from sample trajectories; the only actions and metadata keys matchers may use):
+Observed event vocabulary (from sample trajectories):
 ${JSON.stringify(vocabulary, null, 2)}`,
     },
   ];
@@ -121,84 +121,52 @@ function matchers(pattern: EventPattern): EventMatcher[] {
   return Array.isArray(pattern) ? pattern : [pattern];
 }
 
-function unknownVocabulary(
-  pattern: EventPattern,
-  actions: Set<string>,
-  metadataKeys: Set<string>,
-): string[] {
+export interface VocabularySets {
+  actions: Set<string>;
+  metadataKeys: Set<string>;
+}
+
+export function vocabularySets(vocabulary: ActionVocabulary[]): VocabularySets {
+  return {
+    actions: new Set(vocabulary.map((entry) => entry.action)),
+    metadataKeys: new Set(vocabulary.flatMap((entry) => Object.keys(entry.metadataKeys))),
+  };
+}
+
+function unobservedInPattern(pattern: EventPattern, sets: VocabularySets): string[] {
   const problems: string[] = [];
   for (const matcher of matchers(pattern)) {
-    if (matcher.action !== undefined && !actions.has(matcher.action)) {
+    if (matcher.action !== undefined && !sets.actions.has(matcher.action)) {
       problems.push(`action \`${matcher.action}\``);
     }
     for (const key of Object.keys(matcher.metadata ?? {})) {
-      if (!metadataKeys.has(key)) problems.push(`metadata key \`${key}\``);
+      if (!sets.metadataKeys.has(key)) problems.push(`metadata key \`${key}\``);
     }
   }
-  return problems;
+  return [...new Set(problems)];
 }
 
-export interface EnforcementNotice {
-  metaBehavior: string;
-  demoted: string;
-  problems: string[];
+/** Vocabulary a predicate trigger references that no sample event exhibits. */
+export function unobservedInTrigger(trigger: Trigger, sets: VocabularySets): string[] {
+  return "match" in trigger ? unobservedInPattern(trigger.match, sets) : [];
 }
 
-/**
- * Demote any matcher that references vocabulary absent from the samples:
- * triggers become semantic triggers, checks become semantic checks.
- */
-export function enforceVocabulary(
-  ir: JudgeIr,
-  vocabulary: ActionVocabulary[],
-): { ir: JudgeIr; notices: EnforcementNotice[] } {
-  const actions = new Set(vocabulary.map((entry) => entry.action));
-  const metadataKeys = new Set(vocabulary.flatMap((entry) => Object.keys(entry.metadataKeys)));
-  const notices: EnforcementNotice[] = [];
-
-  const metaBehaviors = ir.metaBehaviors.map((meta): MetaBehaviorIr => {
-    let trigger: Trigger = meta.trigger;
-    if ("match" in trigger) {
-      const problems = unknownVocabulary(trigger.match, actions, metadataKeys);
-      if (problems.length > 0) {
-        notices.push({ metaBehavior: meta.name, demoted: "trigger", problems });
-        trigger = { description: trigger.description, semantic: true };
-      }
-    }
-
-    const checks: PredicateCheck[] = [];
-    const semanticChecks: SemanticCheck[] = [...meta.semanticChecks];
-    for (const check of meta.checks) {
-      const checkPatterns =
-        check.type === "ordering"
-          ? [check.first, check.before]
-          : check.type === "pairing"
-            ? [check.each, check.followedBy]
-            : check.after === undefined
-              ? [check.match]
-              : [check.match, check.after];
-      const problems = checkPatterns.flatMap((pattern) =>
-        unknownVocabulary(pattern, actions, metadataKeys),
-      );
-      if (check.type === "count" && check.distinctBy?.startsWith("metadata.")) {
-        const key = check.distinctBy.slice("metadata.".length);
-        if (!metadataKeys.has(key)) problems.push(`metadata key \`${key}\``);
-      }
-      if (problems.length === 0) {
-        checks.push(check);
-      } else {
-        notices.push({ metaBehavior: meta.name, demoted: `${check.type} check`, problems });
-        semanticChecks.push({
-          quote: check.quote,
-          question: `Does the agent's conduct satisfy this clause: "${check.quote}"?`,
-        });
-      }
-    }
-
-    return { name: meta.name, trigger, checks, semanticChecks };
-  });
-
-  return { ir: { ...ir, metaBehaviors }, notices };
+/** Vocabulary a check references that no sample event exhibits. */
+export function unobservedInCheck(check: PredicateCheck, sets: VocabularySets): string[] {
+  const patterns =
+    check.type === "ordering"
+      ? [check.first, check.before]
+      : check.type === "pairing"
+        ? [check.each, check.followedBy]
+        : check.after === undefined
+          ? [check.match]
+          : [check.match, check.after];
+  const problems = patterns.flatMap((pattern) => unobservedInPattern(pattern, sets));
+  if (check.type === "count" && check.distinctBy?.startsWith("metadata.")) {
+    const key = check.distinctBy.slice("metadata.".length);
+    if (!sets.metadataKeys.has(key)) problems.push(`metadata key \`${key}\``);
+  }
+  return [...new Set(problems)];
 }
 
 export interface InterviewDeps {
@@ -233,6 +201,13 @@ function describeEvidence(trajectories: AgentTrajectory[], pattern: EventPattern
 
 function renderPattern(pattern: EventPattern): string {
   return JSON.stringify(pattern);
+}
+
+function writeUnobservedWarning(deps: InterviewDeps, problems: string[]): void {
+  if (problems.length === 0) return;
+  deps.write(
+    `  warning: references ${problems.join(", ")} not observed in any sample trajectory — accept only if your agent's instrumentation emits it`,
+  );
 }
 
 async function askChoice(deps: InterviewDeps, prompt: string, choices: string[]): Promise<string> {
@@ -273,6 +248,7 @@ async function interviewNames(
 async function interviewTrigger(
   meta: MetaBehaviorIr,
   trajectories: AgentTrajectory[],
+  sets: VocabularySets,
   deps: InterviewDeps,
 ): Promise<Trigger> {
   const trigger = meta.trigger;
@@ -281,6 +257,7 @@ async function interviewTrigger(
   if ("match" in trigger) {
     deps.write(`  match: ${renderPattern(trigger.match)}`);
     deps.write(describeEvidence(trajectories, trigger.match));
+    writeUnobservedWarning(deps, unobservedInTrigger(trigger, sets));
     const answer = await askChoice(deps, "[y] accept / [s] force semantic / [e] edit description", [
       "y",
       "s",
@@ -306,6 +283,7 @@ async function interviewTrigger(
 async function interviewChecks(
   meta: MetaBehaviorIr,
   trajectories: AgentTrajectory[],
+  sets: VocabularySets,
   deps: InterviewDeps,
 ): Promise<{ checks: PredicateCheck[]; demoted: SemanticCheck[] }> {
   const checks: PredicateCheck[] = [];
@@ -333,6 +311,7 @@ async function interviewChecks(
         deps.write(`  distinctBy: ${check.distinctBy}`);
       }
     }
+    writeUnobservedWarning(deps, unobservedInCheck(check, sets));
     const answer = await askChoice(deps, "[y] accept / [s] demote to semantic / [d] drop", [
       "y",
       "s",
@@ -404,19 +383,13 @@ export async function runInterview(
     (response) => parseProposal(response, input.behaviorName),
   );
 
-  const { ir: enforced, notices } = enforceVocabulary(proposal, vocabulary);
-  for (const notice of notices) {
-    deps.write(
-      `note: demoted ${notice.demoted} in "${notice.metaBehavior}" to semantic (unknown ${notice.problems.join(", ")}).`,
-    );
-  }
-
-  const namedMetaBehaviors = await interviewNames(enforced, metaBehaviorNames.length > 0, deps);
+  const sets = vocabularySets(vocabulary);
+  const namedMetaBehaviors = await interviewNames(proposal, metaBehaviorNames.length > 0, deps);
 
   const metaBehaviors: MetaBehaviorIr[] = [];
   for (const meta of namedMetaBehaviors) {
-    const trigger = await interviewTrigger(meta, input.trajectories, deps);
-    const { checks, demoted } = await interviewChecks(meta, input.trajectories, deps);
+    const trigger = await interviewTrigger(meta, input.trajectories, sets, deps);
+    const { checks, demoted } = await interviewChecks(meta, input.trajectories, sets, deps);
     const semanticChecks = await interviewSemanticChecks(
       [...meta.semanticChecks, ...demoted],
       deps,
