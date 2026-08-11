@@ -212,6 +212,80 @@ describe("runInterview", () => {
     expect(ir!.metaBehaviors[1]!.semanticChecks).toHaveLength(1);
   });
 
+  it("shows matcher-referenced metadata and clipped content as evidence", async () => {
+    const { deps, output } = scriptedDeps(JSON.stringify(proposal), ["y", "y", "y", "y", "y", "y"]);
+
+    await runInterview(
+      { behaviorName: "primary-source-tax-research", behaviorBody, trajectories },
+      deps,
+    );
+
+    // Meta 1 trigger: no metadata in the matcher, short content shown in full.
+    expect(output).toContain("  evidence: secondary-then-primary/event-4 (agent web_search)");
+    expect(output).toContain(
+      '            content: "Example Tax Code home office deduction mixed personal use"',
+    );
+
+    // Meta 2 required check: matcher binds metadata.sourceType, long content clipped.
+    const index = output.indexOf(
+      "  evidence: secondary-then-primary/event-7 (tool open_url_result)",
+    );
+    expect(index).toBeGreaterThan(-1);
+    expect(output[index + 1]).toBe('            metadata.sourceType: "primary"');
+    expect(output[index + 2]).toMatch(/^ {12}content: "Example Tax Code section 10: .*…"$/);
+  });
+
+  it("flattens whitespace in evidence content", async () => {
+    const edited = structuredClone(trajectories[0]!);
+    edited.events[3]!.content = "line one\n  line two   with   spaces";
+    const { deps, output } = scriptedDeps(JSON.stringify(proposal), ["y", "y", "y", "y", "y", "y"]);
+
+    await runInterview(
+      {
+        behaviorName: "primary-source-tax-research",
+        behaviorBody,
+        trajectories: [edited, trajectories[1]!],
+      },
+      deps,
+    );
+
+    expect(output).toContain('            content: "line one line two with spaces"');
+  });
+
+  it("labels a no-match forbidden check as expected", async () => {
+    const forbiddenProposal = structuredClone(proposal) as unknown as {
+      metaBehaviors: Array<{ checks: Array<Record<string, unknown>> }>;
+    };
+    forbiddenProposal.metaBehaviors[1]!.checks[0] = {
+      type: "forbidden",
+      quote: "it reads the relevant primary source",
+      match: { action: "web_search", contentIncludes: "phrase-no-sample-contains" },
+    };
+
+    // Same prompt sequence as the accept-all path.
+    const { deps, output } = scriptedDeps(JSON.stringify(forbiddenProposal), [
+      "y",
+      "y",
+      "y",
+      "y",
+      "y",
+      "y",
+    ]);
+
+    await runInterview(
+      { behaviorName: "primary-source-tax-research", behaviorBody, trajectories },
+      deps,
+    );
+
+    expect(
+      output.some((line) =>
+        line.startsWith(
+          "  evidence: no sample event matches (expected — well-behaved samples should not exhibit a forbidden event)",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("returns undefined when the final confirmation is declined", async () => {
     const { deps } = scriptedDeps(JSON.stringify(proposal), ["y", "y", "y", "y", "y", "n"]);
 
