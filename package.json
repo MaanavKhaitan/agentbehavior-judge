@@ -2,12 +2,18 @@
   "name": "agentbehavior-judge",
   "version": "0.1.0",
   "description": "Compile Agent Behavior specs into checked-in judge IRs and run them over trajectories.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MaanavKhaitan/agentbehavior-judge.git"
+  },
   "bin": {
     "behavior-judge": "./dist/cli.mjs"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
   "main": "./dist/index.mjs",
@@ -25,13 +31,15 @@
     "test": "vp test --run"
   },
   "dependencies": {
-    "agentbehavior": "workspace:*",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@types/node": "^25.9.3"
+    "@types/node": "^25.9.3",
+    "typescript": "^7.0.2",
+    "vite-plus": "^0.2.1"
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "packageManager": "pnpm@10.33.0"
 }

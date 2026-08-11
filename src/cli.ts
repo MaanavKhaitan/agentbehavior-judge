@@ -5,8 +5,6 @@ import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs as parseNodeArgs } from "node:util";
 
-import { allDiagnostics, behaviorRecord, hasErrors, validatePath } from "agentbehavior";
-
 import { applyNearestDotEnv } from "./env.js";
 import { runInterview } from "./generate.js";
 import { completeWithBraintrustGateway, type JudgeCompletion } from "./gateway.js";
@@ -18,6 +16,7 @@ import {
   type TrajectoryJudgment,
 } from "./judge.js";
 import { parseIr, serializeIr, type JudgeIr } from "./ir.js";
+import { loadBehaviorSpec, type BehaviorSpec } from "./spec.js";
 import { loadTrajectoryFile, type TrajectoryCase } from "./trajectory.js";
 
 export interface CliDeps {
@@ -258,18 +257,12 @@ async function runGenerateCommand(args: ParsedArgs, deps: CliDeps): Promise<numb
     return 1;
   }
 
-  const result = await validatePath(behaviorPath);
-  const diagnostics = allDiagnostics(result);
-  if (hasErrors(diagnostics) || result.behaviors.length !== 1) {
-    for (const entry of diagnostics) {
-      process.stderr.write(`${entry.severity}: ${entry.code}: ${entry.message}\n`);
-    }
-    process.stderr.write(`error: ${behaviorPath} is not a single valid behavior spec.\n`);
-    return 1;
-  }
-  const record = behaviorRecord(result.behaviors[0]!);
-  if (record === undefined) {
-    process.stderr.write(`error: ${behaviorPath} is not a single valid behavior spec.\n`);
+  let record: BehaviorSpec;
+  try {
+    record = await loadBehaviorSpec(behaviorPath);
+  } catch (error) {
+    process.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`error: ${behaviorPath} is not a valid behavior spec.\n`);
     return 1;
   }
 

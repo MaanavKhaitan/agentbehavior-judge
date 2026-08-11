@@ -11,6 +11,7 @@ export {
   type SemanticCheck,
   type Trigger,
 } from "./ir.js";
+export { loadBehaviorSpec, type BehaviorSpec } from "./spec.js";
 export {
   loadTrajectoryFile,
   type AgentTrajectory,

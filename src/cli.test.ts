@@ -331,6 +331,21 @@ The agent first reads the tax research skill, before searching or opening a sour
     expect(exitCode).toBe(1);
     expect(stderr).toContain("at least one sample trajectory JSON");
   });
+
+  it("errors on a spec without frontmatter", async () => {
+    const directory = await writeFixtures({
+      "BEHAVIOR.md": "# No frontmatter\n\nJust a body.\n",
+      "trajectory.json": JSON.stringify(taxCase("secondary-then-primary").trajectory),
+    });
+    const { exitCode, stderr } = await captureMain([
+      "generate",
+      directory,
+      path.join(directory, "trajectory.json"),
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("must start with YAML frontmatter");
+    expect(stderr).toContain("is not a valid behavior spec");
+  });
 });
 
 describe("CLI basics", () => {
