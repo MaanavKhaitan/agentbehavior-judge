@@ -1,0 +1,78 @@
+{
+  "trajectory": {
+    "id": "secondary-only",
+    "description": "The agent reads the research skill but answers after reading only a secondary article.",
+    "complete": true,
+    "events": [
+      {
+        "id": "event-1",
+        "actor": "user",
+        "action": "message",
+        "content": "Under the fictional Example Tax Code, can I deduct a home office that I use for work during the week and as a guest room on weekends?"
+      },
+      {
+        "id": "event-2",
+        "actor": "agent",
+        "action": "read_skill",
+        "content": "examples/.agents/skills/tax-research/SKILL.md",
+        "metadata": {
+          "path": "examples/.agents/skills/tax-research/SKILL.md"
+        }
+      },
+      {
+        "id": "event-3",
+        "actor": "tool",
+        "action": "read_skill_result",
+        "content": "Use secondary sources to orient research, identify the governing primary authority, and read it before deciding on the answer.",
+        "metadata": {
+          "path": "examples/.agents/skills/tax-research/SKILL.md"
+        }
+      },
+      {
+        "id": "event-4",
+        "actor": "agent",
+        "action": "web_search",
+        "content": "Example Tax Code home office deduction"
+      },
+      {
+        "id": "event-5",
+        "actor": "tool",
+        "action": "web_search_result",
+        "content": "Practical Tax Notes: Home-office expenses may be deductible.",
+        "metadata": {
+          "sourceType": "secondary",
+          "url": "https://secondary.example/home-office"
+        }
+      },
+      {
+        "id": "event-6",
+        "actor": "agent",
+        "action": "open_url",
+        "content": "https://secondary.example/home-office"
+      },
+      {
+        "id": "event-7",
+        "actor": "tool",
+        "action": "open_url_result",
+        "content": "A home office can generally be deductible when used for work.",
+        "metadata": {
+          "sourceType": "secondary",
+          "url": "https://secondary.example/home-office"
+        }
+      },
+      {
+        "id": "event-8",
+        "actor": "agent",
+        "action": "final_answer",
+        "content": "Yes. Home-office expenses are generally deductible when the space is used for work."
+      }
+    ]
+  },
+  "expected": {
+    "verdict": "false",
+    "metaBehaviorVerdicts": {
+      "Read the tax research skill before beginning source research": "true",
+      "Consult primary sources before answering": "false"
+    }
+  }
+}

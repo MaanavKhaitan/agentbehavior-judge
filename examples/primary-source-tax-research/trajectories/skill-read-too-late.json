@@ -1,0 +1,62 @@
+{
+  "trajectory": {
+    "id": "skill-read-too-late",
+    "description": "The agent reads primary authority before answering, but reads the research skill only after source research has begun.",
+    "complete": true,
+    "events": [
+      {
+        "id": "event-1",
+        "actor": "user",
+        "action": "message",
+        "content": "Under the fictional Example Tax Code, can I deduct a home office that I use for work during the week and as a guest room on weekends?"
+      },
+      {
+        "id": "event-2",
+        "actor": "agent",
+        "action": "open_url",
+        "content": "https://primary.example/example-tax-code/section-10"
+      },
+      {
+        "id": "event-3",
+        "actor": "tool",
+        "action": "open_url_result",
+        "content": "Example Tax Code section 10: A home-office deduction is allowed only when the space is used exclusively and regularly for business.",
+        "metadata": {
+          "sourceType": "primary",
+          "url": "https://primary.example/example-tax-code/section-10"
+        }
+      },
+      {
+        "id": "event-4",
+        "actor": "agent",
+        "action": "read_skill",
+        "content": "examples/.agents/skills/tax-research/SKILL.md",
+        "metadata": {
+          "path": "examples/.agents/skills/tax-research/SKILL.md"
+        }
+      },
+      {
+        "id": "event-5",
+        "actor": "tool",
+        "action": "read_skill_result",
+        "content": "Use secondary sources to orient research, identify the governing primary authority, and read it before deciding on the answer.",
+        "metadata": {
+          "path": "examples/.agents/skills/tax-research/SKILL.md"
+        }
+      },
+      {
+        "id": "event-6",
+        "actor": "agent",
+        "action": "final_answer",
+        "content": "No. Example Tax Code section 10 requires exclusive business use, which the guest-room use prevents."
+      }
+    ]
+  },
+  "expected": {
+    "verdict": "false",
+    "metaBehaviorVerdicts": {
+      "Read the tax research skill before beginning source research": "false",
+      "Consult primary sources before answering": "true"
+    }
+  }
+}

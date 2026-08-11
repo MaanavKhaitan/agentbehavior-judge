@@ -1,0 +1,28 @@
+{
+  "trajectory": {
+    "id": "tax-adjacent-writing",
+    "description": "The agent rewrites an email without answering a tax question.",
+    "complete": true,
+    "events": [
+      {
+        "id": "event-1",
+        "actor": "user",
+        "action": "message",
+        "content": "Rewrite this email: I attached my home-office receipts for my accountant. Let me know if you need anything else."
+      },
+      {
+        "id": "event-2",
+        "actor": "agent",
+        "action": "final_answer",
+        "content": "I've attached my home-office receipts. Please let me know if you need any additional information."
+      }
+    ]
+  },
+  "expected": {
+    "verdict": "na",
+    "metaBehaviorVerdicts": {
+      "Read the tax research skill before beginning source research": "na",
+      "Consult primary sources before answering": "na"
+    }
+  }
+}
