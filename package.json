@@ -1,0 +1,37 @@
+{
+  "name": "agentbehavior-judge",
+  "version": "0.1.0",
+  "description": "Compile Agent Behavior specs into checked-in judge IRs and run them over trajectories.",
+  "bin": {
+    "behavior-judge": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "vp pack",
+    "check": "vp check",
+    "prepublishOnly": "vp pack",
+    "test": "vp test --run"
+  },
+  "dependencies": {
+    "agentbehavior": "workspace:*",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
