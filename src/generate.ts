@@ -58,10 +58,13 @@ const PROPOSAL_SYSTEM_PROMPT = `You compile an Agent Behavior spec into a judge 
 The IR decomposes the spec into meta-behaviors (one per H2 section). Each meta-behavior has:
 - "trigger": when the meta-behavior applies. Either {"description", "match"} (an event matcher, or array of matchers meaning any-of) or {"description", "semantic": true} when no event pattern can detect it.
 - "checks": deterministic predicate checks over trajectory events. Types:
-  - {"type": "ordering", "quote", "first": <match>, "before": <match>} — the first \`first\`-match must precede the first \`before\`-match.
-  - {"type": "required", "quote", "match": <match>} — a matching event must exist.
-  - {"type": "forbidden", "quote", "match": <match>} — no matching event may exist.
-  - {"type": "count", "quote", "match": <match>, "min"?, "max"?} — match count within bounds.
+  - {"type": "ordering", "quote", "first": <match>, "before": <match>} — the first \`first\`-match must precede the first \`before\`-match. For one-time precedence clauses like "reads the skill before searching or opening a source".
+  - {"type": "pairing", "quote", "each": <match>, "followedBy": <match>} — every \`each\`-match must be followed later by a \`followedBy\`-match. For per-occurrence clauses like "reads the results of every search" or "every failed call is retried or reported".
+  - {"type": "required", "quote", "match": <match>, "after"?: <match>} — a matching event must exist. For clauses like "consults a primary source".
+  - {"type": "forbidden", "quote", "match": <match>, "after"?: <match>} — no matching event may exist. For clauses like "never contacts external services".
+  - {"type": "count", "quote", "match": <match>, "min"?, "max"?, "after"?: <match>, "distinctBy"?: "content" | "metadata.<key>"} — match count within bounds, for clauses like "searches at most three times". "distinctBy" counts distinct values instead of raw matches, for clauses like "consults at least two distinct sources".
+  The optional "after" matcher scopes required/forbidden/count to events after the first \`after\`-match, for "once X happens..." clauses like "after giving the final answer, takes no further actions"; the check is not applicable when no \`after\`-match exists.
+  The example clauses above illustrate clause shapes only: matchers must still use only the observed vocabulary.
 - "semanticChecks": [{"quote", "question"}] — clauses only an LLM can judge; the question must be answerable yes/no from the trajectory.
 
 An event matcher is {"action"?, "actor"?, "contentIncludes"?, "metadata"?: {key: value}}; all set fields must match an event.
@@ -166,10 +169,21 @@ export function enforceVocabulary(
     const checks: PredicateCheck[] = [];
     const semanticChecks: SemanticCheck[] = [...meta.semanticChecks];
     for (const check of meta.checks) {
-      const checkPatterns = check.type === "ordering" ? [check.first, check.before] : [check.match];
+      const checkPatterns =
+        check.type === "ordering"
+          ? [check.first, check.before]
+          : check.type === "pairing"
+            ? [check.each, check.followedBy]
+            : check.after === undefined
+              ? [check.match]
+              : [check.match, check.after];
       const problems = checkPatterns.flatMap((pattern) =>
         unknownVocabulary(pattern, actions, metadataKeys),
       );
+      if (check.type === "count" && check.distinctBy?.startsWith("metadata.")) {
+        const key = check.distinctBy.slice("metadata.".length);
+        if (!metadataKeys.has(key)) problems.push(`metadata key \`${key}\``);
+      }
       if (problems.length === 0) {
         checks.push(check);
       } else {
@@ -303,9 +317,21 @@ async function interviewChecks(
       deps.write(describeEvidence(trajectories, check.first));
       deps.write(`  before: ${renderPattern(check.before)}`);
       deps.write(describeEvidence(trajectories, check.before));
+    } else if (check.type === "pairing") {
+      deps.write(`  each: ${renderPattern(check.each)}`);
+      deps.write(describeEvidence(trajectories, check.each));
+      deps.write(`  followedBy: ${renderPattern(check.followedBy)}`);
+      deps.write(describeEvidence(trajectories, check.followedBy));
     } else {
       deps.write(`  match: ${renderPattern(check.match)}`);
       deps.write(describeEvidence(trajectories, check.match));
+      if (check.after !== undefined) {
+        deps.write(`  after: ${renderPattern(check.after)}`);
+        deps.write(describeEvidence(trajectories, check.after));
+      }
+      if (check.type === "count" && check.distinctBy !== undefined) {
+        deps.write(`  distinctBy: ${check.distinctBy}`);
+      }
     }
     const answer = await askChoice(deps, "[y] accept / [s] demote to semantic / [d] drop", [
       "y",

@@ -225,6 +225,42 @@ describe("judgeTrajectory orchestration", () => {
     ).rejects.toThrow(/unknown event event-99/);
   });
 
+  it("routes a false from a new-style predicate (pairing) through the same single verify call", async () => {
+    const pairingIr: JudgeIr = {
+      version: 1,
+      behavior: "test-behavior",
+      metaBehaviors: [
+        {
+          name: "Meta A",
+          trigger: { description: "The agent searches.", match: { action: "web_search" } },
+          checks: [
+            {
+              type: "pairing",
+              quote: "reads the results of every search",
+              each: { action: "web_search" },
+              followedBy: { action: "web_search_result" },
+            },
+          ],
+          semanticChecks: [],
+        },
+      ],
+    };
+    const { complete, calls } = queuedCompletion([semanticResponse("false", "event-1")]);
+    const judgment = await judgeTrajectory({
+      ir: pairingIr,
+      trajectory: trajectory([event("event-1", "web_search")]),
+      complete,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(judgment.verdict).toBe("false");
+    expect(judgment.metaBehaviors[0]!.clauses[0]).toMatchObject({
+      kind: "predicate",
+      verdict: "false",
+      verification: "confirmed",
+    });
+  });
+
   it("short-circuits an empty trajectory to na with zero calls", async () => {
     const { complete, calls } = queuedCompletion([]);
     const judgment = await judgeTrajectory({ ir, trajectory: trajectory([]), complete });

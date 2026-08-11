@@ -52,7 +52,92 @@ describe("parseIr", () => {
 
   it("rejects an unknown check type", () => {
     const source = minimalIr.replace("type: required", "type: freshness");
-    expect(() => parseIr(source)).toThrow(/must be ordering, required, forbidden, or count/);
+    expect(() => parseIr(source)).toThrow(
+      /must be ordering, pairing, required, forbidden, or count/,
+    );
+  });
+
+  it("parses pairing checks and after/distinctBy fields, and round-trips them", () => {
+    const source = `
+version: 1
+behavior: test-behavior
+metaBehaviors:
+  - name: Meta A
+    trigger:
+      description: The agent searches.
+      match:
+        action: web_search
+    checks:
+      - type: pairing
+        quote: every search result is read
+        each:
+          action: web_search
+        followedBy:
+          action: web_search_result
+      - type: forbidden
+        quote: takes no further actions after answering
+        match:
+          actor: agent
+        after:
+          action: final_answer
+      - type: count
+        quote: consults at least two distinct sources
+        match:
+          action: open_url_result
+        min: 2
+        distinctBy: metadata.url
+`;
+    const ir = parseIr(source);
+    expect(ir.metaBehaviors[0]!.checks).toEqual([
+      {
+        type: "pairing",
+        quote: "every search result is read",
+        each: { action: "web_search" },
+        followedBy: { action: "web_search_result" },
+      },
+      {
+        type: "forbidden",
+        quote: "takes no further actions after answering",
+        match: { actor: "agent" },
+        after: { action: "final_answer" },
+      },
+      {
+        type: "count",
+        quote: "consults at least two distinct sources",
+        match: { action: "open_url_result" },
+        min: 2,
+        distinctBy: "metadata.url",
+      },
+    ]);
+    expect(parseIr(serializeIr(ir))).toEqual(ir);
+  });
+
+  it("rejects a pairing check without followedBy", () => {
+    const source = minimalIr
+      .replace("type: required", "type: pairing")
+      .replace(/match:\n {10}action: web_search/, "each:\n          action: web_search");
+    expect(() => parseIr(source)).toThrow(/checks\[0\]\.followedBy: must be an object/);
+  });
+
+  it("rejects a malformed distinctBy", () => {
+    const source = `
+version: 1
+behavior: test-behavior
+metaBehaviors:
+  - name: Meta A
+    trigger:
+      description: The agent searches.
+      match:
+        action: web_search
+    checks:
+      - type: count
+        quote: consults distinct sources
+        match:
+          action: open_url_result
+        min: 2
+        distinctBy: url
+`;
+    expect(() => parseIr(source)).toThrow('must be "content" or "metadata.<key>"');
   });
 
   it("rejects an empty matcher", () => {

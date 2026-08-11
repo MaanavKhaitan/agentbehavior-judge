@@ -18,9 +18,19 @@ export type Trigger =
 
 export type PredicateCheck =
   | { type: "ordering"; quote: string; first: EventPattern; before: EventPattern }
-  | { type: "required"; quote: string; match: EventPattern }
-  | { type: "forbidden"; quote: string; match: EventPattern }
-  | { type: "count"; quote: string; match: EventPattern; min?: number; max?: number };
+  | { type: "pairing"; quote: string; each: EventPattern; followedBy: EventPattern }
+  | { type: "required"; quote: string; match: EventPattern; after?: EventPattern }
+  | { type: "forbidden"; quote: string; match: EventPattern; after?: EventPattern }
+  | {
+      type: "count";
+      quote: string;
+      match: EventPattern;
+      min?: number;
+      max?: number;
+      after?: EventPattern;
+      /** "content" or "metadata.<key>": count distinct values instead of raw matches. */
+      distinctBy?: string;
+    };
 
 export interface SemanticCheck {
   quote: string;
@@ -116,6 +126,13 @@ function parseCount(value: unknown, path: string): number {
   return value;
 }
 
+function parseDistinctBy(value: unknown, path: string): string {
+  const raw = requireString(value, path);
+  if (raw === "content") return raw;
+  if (raw.startsWith("metadata.") && raw.length > "metadata.".length) return raw;
+  fail(path, 'must be "content" or "metadata.<key>".');
+}
+
 function parseCheck(value: unknown, path: string): PredicateCheck {
   if (!isRecord(value)) fail(path, "must be an object.");
   const quote = requireString(value.quote, `${path}.quote`);
@@ -128,8 +145,21 @@ function parseCheck(value: unknown, path: string): PredicateCheck {
       before: parseMatch(value.before, `${path}.before`),
     };
   }
+  if (type === "pairing") {
+    return {
+      type,
+      quote,
+      each: parseMatch(value.each, `${path}.each`),
+      followedBy: parseMatch(value.followedBy, `${path}.followedBy`),
+    };
+  }
   if (type === "required" || type === "forbidden") {
-    return { type, quote, match: parseMatch(value.match, `${path}.match`) };
+    const match = parseMatch(value.match, `${path}.match`);
+    const after = value.after === undefined ? undefined : parseMatch(value.after, `${path}.after`);
+    if (type === "required") {
+      return after === undefined ? { type, quote, match } : { type, quote, match, after };
+    }
+    return after === undefined ? { type, quote, match } : { type, quote, match, after };
   }
   if (type === "count") {
     const min = value.min === undefined ? undefined : parseCount(value.min, `${path}.min`);
@@ -144,9 +174,13 @@ function parseCheck(value: unknown, path: string): PredicateCheck {
     };
     if (min !== undefined) check.min = min;
     if (max !== undefined) check.max = max;
+    if (value.after !== undefined) check.after = parseMatch(value.after, `${path}.after`);
+    if (value.distinctBy !== undefined) {
+      check.distinctBy = parseDistinctBy(value.distinctBy, `${path}.distinctBy`);
+    }
     return check;
   }
-  fail(`${path}.type`, "must be ordering, required, forbidden, or count.");
+  fail(`${path}.type`, "must be ordering, pairing, required, forbidden, or count.");
 }
 
 function parseSemanticCheck(value: unknown, path: string): SemanticCheck {

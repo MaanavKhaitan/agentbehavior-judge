@@ -82,12 +82,20 @@ clauses that would need vocabulary your traces don't record become semantic chec
 
 Predicate semantics (evaluated after the trigger fires):
 
-| type        | true                                              | false                                        | na                            |
-| ----------- | ------------------------------------------------- | -------------------------------------------- | ----------------------------- |
-| `ordering`  | first `first`-match precedes first `before`-match | a `before`-match with no prior `first`-match | no `before`-match             |
-| `required`  | match exists                                      | no match and trace complete                  | no match, trace incomplete    |
-| `forbidden` | no match                                          | match exists                                 | never                         |
-| `count`     | within `min`/`max`                                | over `max`; under `min` when complete        | under `min`, trace incomplete |
+| type        | true                                              | false                                               | na                                              |
+| ----------- | ------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------- |
+| `ordering`  | first `first`-match precedes first `before`-match | a `before`-match with no prior `first`-match        | no `before`-match                               |
+| `pairing`   | every `each`-match has a later `followedBy`-match | an `each`-match with no later match, trace complete | no `each`-match; unmatched but trace incomplete |
+| `required`  | match exists                                      | no match and trace complete                         | no match, trace incomplete                      |
+| `forbidden` | no match                                          | match exists                                        | never (see `after`)                             |
+| `count`     | within `min`/`max`                                | over `max`; under `min` when complete               | under `min`, trace incomplete                   |
+
+`required`, `forbidden`, and `count` accept an optional `after:` matcher that scopes the
+check to events strictly after the first `after`-match ("once X happens…" clauses, e.g.
+"after emitting the final answer, the agent takes no further actions"); when the window
+never opens the check is `na`. `count` also accepts `distinctBy: "content"` or
+`distinctBy: "metadata.<key>"` to count distinct values instead of raw matches ("consults
+at least two distinct sources"); matches missing the key are not counted.
 
 ## How judging runs
 

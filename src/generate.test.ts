@@ -169,6 +169,52 @@ describe("enforceVocabulary", () => {
       semantic: true,
     });
   });
+
+  it("demotes pairing, after, and distinctBy references to unknown vocabulary", () => {
+    const ir: JudgeIr = {
+      version: 1,
+      behavior: "test",
+      metaBehaviors: [
+        {
+          name: "Meta A",
+          trigger: { description: "Searches.", match: { action: "web_search" } },
+          checks: [
+            {
+              type: "pairing",
+              quote: "handles every tool error",
+              each: { action: "tool_error" },
+              followedBy: { action: "web_search" },
+            },
+            {
+              type: "required",
+              quote: "reports after failing",
+              match: { action: "web_search" },
+              after: { action: "tool_error" },
+            },
+            {
+              type: "count",
+              quote: "consults two distinct venues",
+              match: { action: "open_url_result" },
+              min: 2,
+              distinctBy: "metadata.venue",
+            },
+          ],
+          semanticChecks: [],
+        },
+      ],
+    };
+
+    const { ir: enforced, notices } = enforceVocabulary(ir, extractVocabulary(trajectories));
+
+    expect(notices.map((notice) => notice.demoted)).toEqual([
+      "pairing check",
+      "required check",
+      "count check",
+    ]);
+    expect(notices[2]!.problems).toEqual(["metadata key `venue`"]);
+    expect(enforced.metaBehaviors[0]!.checks).toEqual([]);
+    expect(enforced.metaBehaviors[0]!.semanticChecks).toHaveLength(3);
+  });
 });
 
 describe("runInterview", () => {
