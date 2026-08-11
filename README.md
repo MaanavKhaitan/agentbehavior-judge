@@ -151,6 +151,66 @@ meta agreement 12/12, file agreement 6/6
 
 `calibrate` exits 1 on any disagreement, so it can gate CI.
 
+## More examples: predicate-only judges
+
+Two further examples cover the remaining predicate types and need no LLM at all to reach
+their expected verdicts (their triggers and checks are all deterministic;
+`src/examples.test.ts` re-derives every checked-in verdict offline in CI):
+
+- [`examples/verified-refund-support/`](examples/verified-refund-support/) — a
+  customer-support refund agent: `ordering` (passed identity verification before any
+  account change), `pairing` (every refund followed by a case note), `forbidden` (never
+  fetch a full card number), and `count` with `max` (at most two refund _attempts_).
+- [`examples/staged-rollout-deploys/`](examples/staged-rollout-deploys/) — an SRE deploy
+  agent: `ordering` on event metadata (canary stage before fleet stage), `pairing`
+  (health-check every deploy), `forbidden` scoped by `after:` to a change-freeze window
+  opened by a `contentIncludes` match, and `count` with `min` + `distinctBy` (healthy
+  canary results from three _distinct_ hosts).
+
+Their fixtures are built around the places where holistic LLM judges drift: a forbidden
+event buried in a 41-event session, six healthy checks that only touch two distinct
+hosts, retries that make three attempts look like two refunds, "I logged it" claims with
+no logging event, and incomplete traces where absence is `insufficient_evidence` rather
+than a violation. The suites are deliberately violation-heavy, and each example README
+carries fairness notes: one case per example hinges on a disclosed incomplete-trace
+convention and is tallied separately in the stats below.
+
+## Comparing against a one-call LLM judge
+
+The upstream Agent Behavior repo ships an example judge that evaluates the whole spec in
+one monolithic LLM call. [`scripts/upstream-calibrate.mjs`](scripts/upstream-calibrate.mjs)
+ports that judge verbatim and runs it over the same labeled trajectory files, and
+[`scripts/agreement-stats.mjs`](scripts/agreement-stats.mjs) aggregates repeated runs
+from either judge:
+
+```console
+$ node scripts/upstream-calibrate.mjs examples/verified-refund-support/BEHAVIOR.md \
+    examples/verified-refund-support/trajectories/*.json --runs 5 --json > runs.json
+$ node scripts/agreement-stats.mjs --convention-cases cutoff-before-log runs.json
+```
+
+Measured 2026-08-11, default model (`gpt-5-mini`) for both judges: 10 repeated runs per
+judge per example over all 9 labeled cases (36 meta verdicts per run, 720 per judge in
+total):
+
+| Metric                               | `behavior-judge` | Upstream one-call judge         |
+| ------------------------------------ | ---------------- | ------------------------------- |
+| Pooled meta-verdict accuracy         | 720/720 (100%)   | 682/720 (94.7%)                 |
+| Mean per-run agreement, refund suite | 100.0% ± 0.0%    | 91.4% ± 4.8% (worst run: 77.8%) |
+| Mean per-run agreement, deploy suite | 100.0% ± 0.0%    | 98.1% ± 1.0%                    |
+| Perfect runs                         | 20/20            | 3/20                            |
+| Verdict slots unanimous across runs  | 72/72            | 58/72                           |
+
+Our judge's runs were live (verify-on-false enabled) and byte-identical across all
+twenty; the same verdicts are reproduced offline with zero LLM calls in CI. The
+one-call judge's losses came from three places: the two disclosed incomplete-trace
+convention cases (where it applied _opposite_ conventions on different runs of the same
+input), a vacuous-bound clause it kept calling `not_applicable` even after the spec
+said outright that an empty session satisfies it, and one run where two whole cases
+died on its verbatim-quote output validation. On complete traces with valid output it
+judged the trap cases well — the measured gap is reliability, not domain reasoning.
+Per-example READMEs carry the detailed tables, miss lists, and fairness notes.
+
 ## Generating an IR for your own spec
 
 ```console
