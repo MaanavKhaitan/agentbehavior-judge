@@ -46,9 +46,10 @@ metaBehaviors:
     semanticChecks: []
   - name: Stay within the refund attempt limit
     trigger:
-      description: The agent attempts a refund.
+      description: A customer support session is in progress.
       match:
-        action: issue_refund
+        actor: user
+        action: message
     checks:
       - type: count
         quote: The agent attempts at most two refund issuances in one session, even when a

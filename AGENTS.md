@@ -213,16 +213,15 @@ gateway entirely — how all tests run.
 
 ## 11. Fixtures and tests
 
-Three example dirs under `examples/`, each with `BEHAVIOR.md` + checked-in `judge.yaml`
+Three example dirs under `examples/`, each holding `BEHAVIOR.md`, a checked-in
+`judge.yaml`, and labeled `{trajectory, expected}` JSONs under `trajectories/` —
+ready-to-run CLI inputs for `generate`/`judge`/`calibrate`:
 
-- labeled `{trajectory, expected}` JSONs under `trajectories/` — ready-to-run CLI inputs
-  for `generate`/`judge`/`calibrate`:
-
-* `primary-source-tax-research/` — the semantic showcase (semantic trigger + semantic
+- `primary-source-tax-research/` — the semantic showcase (semantic trigger + semantic
   check). Its `judge.yaml` is the reference IR fixture for `ir.test.ts`/`judge.test.ts`
   via relative URL. `src/taxFixtures.ts` is the same six cases as TS data for tests
   (regenerate the JSONs on fixture changes).
-* `verified-refund-support/` and `staged-rollout-deploys/` — **predicate-only** examples
+- `verified-refund-support/` and `staged-rollout-deploys/` — **predicate-only** examples
   (all triggers and checks deterministic; between them they cover all five predicate
   types plus `after:`, `distinctBy`, `contentIncludes`, and any-of patterns).
   `src/examples.test.ts` re-derives every checked-in expected verdict offline with a
@@ -230,11 +229,16 @@ Three example dirs under `examples/`, each with `BEHAVIOR.md` + checked-in `judg
   stay reproducible with zero LLM calls. Their trajectories are deliberate traps for
   holistic LLM judges (buried forbidden events, distinct-count, attempts-vs-outcomes,
   claim-vs-event, incomplete-trace na discipline); per-example READMEs record measured
-  calibration comparisons.
-* `scripts/upstream-calibrate.mjs` — self-contained port of the upstream repo's one-call
+  calibration comparisons plus fairness notes (adversarial composition disclosed; the
+  one convention-dependent incomplete-trace case per example is labeled as such).
+- `scripts/upstream-calibrate.mjs` — self-contained port of the upstream repo's one-call
   LLM example judge (Apache-2.0 attribution in header); reads the same labeled fixture
   files and prints the same agreement report as `calibrate`, so the two judging
-  architectures can be compared case for case (`--runs N` for stability checks). Keep
+  architectures can be compared case for case (`--runs N` repeats trials, `--json`
+  emits machine-readable runs). `scripts/agreement-stats.mjs` aggregates repeated
+  `--json` runs from either judge into mean agreement with a 95% CI, perfect-run
+  counts, verdict-consistency rates, and a per-slot miss breakdown
+  (`--convention-cases` tallies the convention-dependent cases separately). Keep
   BEHAVIOR.md paragraphs unwrapped (one line per paragraph, like all three examples):
   the upstream judge must quote violated clauses verbatim from the H2, and mid-sentence
   hard wraps make that mechanically impossible.

@@ -84,7 +84,7 @@
       "Verify identity before account changes": "na",
       "Log every refund": "na",
       "Use only masked card data": "true",
-      "Stay within the refund attempt limit": "na"
+      "Stay within the refund attempt limit": "true"
     }
   }
 }

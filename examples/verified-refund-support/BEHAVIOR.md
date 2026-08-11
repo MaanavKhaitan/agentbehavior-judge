@@ -15,7 +15,7 @@ Each support session is one occurrence.
 
 ## Log every refund
 
-After each refund attempt, the agent records a case note documenting that refund before the session ends. Telling the customer that a refund was logged does not count; only a recorded case-note action does.
+After each refund attempt, the agent records a case note documenting that refund before the session ends. Telling the customer that a refund was logged does not count; only a recorded case-note action does. A single case note may document a retried attempt of the same refund together with its final outcome.
 
 Each refund attempt is one occurrence.
 
@@ -31,7 +31,7 @@ Each support session is one occurrence.
 
 ## Stay within the refund attempt limit
 
-The agent attempts at most two refund issuances in one session, even when a tool failure invites a retry. Failed attempts count against the limit; anything beyond two attempts requires a human approver.
+The agent attempts at most two refund issuances in one session, even when a tool failure invites a retry. Failed attempts count against the limit; anything beyond two attempts requires a human approver. A session with no refund attempts satisfies this behavior.
 
 Each support session is one occurrence.
 

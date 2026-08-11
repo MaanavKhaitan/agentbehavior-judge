@@ -171,33 +171,45 @@ Their fixtures are built around the places where holistic LLM judges drift: a fo
 event buried in a 41-event session, six healthy checks that only touch two distinct
 hosts, retries that make three attempts look like two refunds, "I logged it" claims with
 no logging event, and incomplete traces where absence is `insufficient_evidence` rather
-than a violation.
+than a violation. The suites are deliberately violation-heavy, and each example README
+carries fairness notes: one case per example hinges on a disclosed incomplete-trace
+convention and is tallied separately in the stats below.
 
 ## Comparing against a one-call LLM judge
 
 The upstream Agent Behavior repo ships an example judge that evaluates the whole spec in
 one monolithic LLM call. [`scripts/upstream-calibrate.mjs`](scripts/upstream-calibrate.mjs)
-ports that judge verbatim and runs it over the same labeled trajectory files, printing
-the same agreement report as `calibrate`:
+ports that judge verbatim and runs it over the same labeled trajectory files, and
+[`scripts/agreement-stats.mjs`](scripts/agreement-stats.mjs) aggregates repeated runs
+from either judge:
 
 ```console
 $ node scripts/upstream-calibrate.mjs examples/verified-refund-support/BEHAVIOR.md \
-    examples/verified-refund-support/trajectories/*.json --runs 3
+    examples/verified-refund-support/trajectories/*.json --runs 5 --json > runs.json
+$ node scripts/agreement-stats.mjs --convention-cases cutoff-before-log runs.json
 ```
 
-Measured 2026-08-11, default model (`gpt-5-mini`) for both judges, four runs each:
+Measured 2026-08-11, default model (`gpt-5-mini`) for both judges: 10 repeated runs per
+judge per example over all 9 labeled cases (36 meta verdicts per run, 720 per judge in
+total):
 
-| Example                 | `behavior-judge`                | Upstream one-call judge                            |
-| ----------------------- | ------------------------------- | -------------------------------------------------- |
-| verified-refund-support | meta 28/28, file 7/7 (all runs) | meta 20–28/28, file 5–7/7 (perfect in 1 of 4 runs) |
-| staged-rollout-deploys  | meta 28/28, file 7/7 (all runs) | meta 26–28/28, file 6–7/7 (perfect in 1 of 4 runs) |
+| Metric                               | `behavior-judge` | Upstream one-call judge         |
+| ------------------------------------ | ---------------- | ------------------------------- |
+| Pooled meta-verdict accuracy         | 720/720 (100%)   | 682/720 (94.7%)                 |
+| Mean per-run agreement, refund suite | 100.0% ± 0.0%    | 91.4% ± 4.8% (worst run: 77.8%) |
+| Mean per-run agreement, deploy suite | 100.0% ± 0.0%    | 98.1% ± 1.0%                    |
+| Perfect runs                         | 20/20            | 3/20                            |
+| Verdict slots unanimous across runs  | 72/72            | 58/72                           |
 
-The disagreements are the designed traps: the one-call judge blanket-NAs incomplete
-traces whose observed conduct is still judgeable, misses NA discipline in incomplete
-traces where the triggering event never arrived, and (run-dependently) miscounts pairs
-and misreads the count clauses. The predicate layer decides all of that
-deterministically and identically on every run; per-example READMEs carry the detailed
-tables.
+Our judge's runs were live (verify-on-false enabled) and byte-identical across all
+twenty; the same verdicts are reproduced offline with zero LLM calls in CI. The
+one-call judge's losses came from three places: the two disclosed incomplete-trace
+convention cases (where it applied _opposite_ conventions on different runs of the same
+input), a vacuous-bound clause it kept calling `not_applicable` even after the spec
+said outright that an empty session satisfies it, and one run where two whole cases
+died on its verbatim-quote output validation. On complete traces with valid output it
+judged the trap cases well — the measured gap is reliability, not domain reasoning.
+Per-example READMEs carry the detailed tables, miss lists, and fairness notes.
 
 ## Generating an IR for your own spec
 
