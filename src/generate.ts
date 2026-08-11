@@ -371,6 +371,7 @@ export async function runInterview(
   deps.write(
     `Observed vocabulary: ${vocabulary.length} action(s) across ${input.trajectories.length} trajectory(ies).`,
   );
+  deps.write("Requesting the IR proposal from the model; this can take a minute or two...");
 
   const proposal = await completeJsonWithRetry(
     deps.complete,
