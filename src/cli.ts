@@ -21,7 +21,7 @@ import { loadTrajectoryFile, type TrajectoryCase } from "./trajectory.js";
 
 export interface CliDeps {
   complete?: JudgeCompletion;
-  ask?: (question: string) => Promise<string>;
+  ask?: (question: string, prefill?: string) => Promise<string>;
   /**
    * Replaces the default nearest-`.env` loading; tests stub it so the real
    * workspace `.env` never leaks into `process.env`.
@@ -282,9 +282,13 @@ async function runGenerateCommand(args: ParsedArgs, deps: CliDeps): Promise<numb
   let readline: ReturnType<typeof createInterface> | undefined;
   const ask =
     deps.ask ??
-    ((question: string) => {
+    ((question: string, prefill?: string) => {
       readline ??= createInterface({ input: process.stdin, output: process.stdout });
-      return readline.question(question);
+      const answer = readline.question(question);
+      // question() has printed the prompt; write() puts the current text in
+      // the line buffer so the user edits it in place instead of retyping.
+      if (prefill !== undefined) readline.write(prefill);
+      return answer;
     });
 
   try {
