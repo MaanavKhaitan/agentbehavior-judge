@@ -71,7 +71,12 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
 - `judge.ts` — orchestrator `judgeTrajectory` (all judging policy lives here),
   `resolveCompletion` (offline detection), result types, `compareToExpected`.
 - `generate.ts` — H2 extraction, `extractVocabulary`, proposal prompt + `parseProposal`,
-  `enforceVocabulary`, `runInterview` (seams: `complete`/`ask`/`write`).
+  unobserved-vocabulary flagging (`vocabularySets`/`unobservedInTrigger`/
+  `unobservedInCheck`), `runInterview` (seams: `complete`/`ask`/`write`).
+- `env.ts` — nearest-`.env` discovery (`loadNearestDotEnv`/`applyNearestDotEnv`): the CLI
+  fills `process.env` from the closest `.env` at or above cwd; already-set variables win.
+  CLI-only concern, not exported from `index.ts`; `cli.test.ts`'s `captureMain` stubs the
+  `CliDeps.loadEnv` seam so the repo's real `.env` never leaks into tests.
 - `cli.ts` — dispatch, report formatting, readline wiring, `CliDeps` injection.
 - `index.ts` — public exports. `taxFixtures.ts` — test-only copy of the six tax cases
   (not packed/exported).
@@ -177,9 +182,11 @@ Braintrust is a **model wrapper only**: `gateway.ts` does one `fetch` to
 `{baseUrl}/chat/completions` (OpenAI-compatible). Env: `BRAINTRUST_API_KEY`,
 `BRAINTRUST_JUDGE_MODEL`/`BRAINTRUST_MODEL` (default `gpt-5-mini`),
 `BRAINTRUST_GATEWAY_BASE_URL` (default `https://gateway.braintrust.dev`), temperature
-pinned 0. **Offline mode** (no key): predicates still run, semantic clauses → `na`,
-falses stay `unverified`; only `generate` truly requires an LLM. The `JudgeCompletion`
-seam (`(messages) => Promise<string>`) bypasses the gateway entirely — how all tests run.
+pinned 0. The CLI fills `process.env` from the nearest `.env` at or above cwd
+(already-set variables win; see `env.ts`). **Offline mode** (no key): predicates still
+run, semantic clauses → `na`, falses stay `unverified`; only `generate` truly requires
+an LLM. The `JudgeCompletion` seam (`(messages) => Promise<string>`) bypasses the
+gateway entirely — how all tests run.
 
 ## 10. `generate` flow (spec → judge.yaml)
 
@@ -190,10 +197,13 @@ seam (`(messages) => Promise<string>`) bypasses the gateway entirely — how all
 3. **One proposal LLM call**. `parseProposal` trick: wrap response JSON in
    `{version: 1, behavior, metaBehaviors}` → `stringifyYaml` → strict `parseIr` — reuses
    the IR validator so malformed proposals get path-labeled errors feeding the retry.
-4. `enforceVocabulary` (code-side, never trusts the model): matcher referencing an
-   unobserved action/metadata key → trigger demoted to `semantic: true`, check demoted
-   to a semantic check, with printed notices. `contentIncludes` is never
-   vocabulary-checked.
+4. Unobserved-vocabulary flagging (code-side, never trusts the model): matchers
+   referencing an action/metadata key absent from the samples are detected via
+   `vocabularySets`/`unobservedInTrigger`/`unobservedInCheck` and get a printed
+   `warning:` line in the interview — the human decides keep/demote/drop (accepting
+   asserts the instrumentation emits that vocabulary; the proposal prompt allows
+   spec-implied unobserved vocabulary, e.g. forbidden actions clean samples never show).
+   `contentIncludes` is never vocabulary-checked.
 5. Interview (single-letter answers, empty = first option): if spec had no H2s, confirm/
    rename/drop proposed names; per meta: trigger `[y/s/e]` with first matching sample
    event as evidence; each check `[y/s/d]`; each semantic check `[y/e/d]`. Metas with
@@ -205,8 +215,10 @@ seam (`(messages) => Promise<string>`) bypasses the gateway entirely — how all
 
 `examples/primary-source-tax-research/` holds the example spec, the **checked-in
 reference IR** (`judge.yaml` — compile target, test fixture for `ir.test.ts`/
-`judge.test.ts` via relative URL, and docs artifact), and the six tax trajectories as
-JSON. `src/taxFixtures.ts` is the same six cases as TS data for tests:
+`judge.test.ts` via relative URL, and docs artifact), and per-case
+`{trajectory, expected}` JSONs under `trajectories/` — ready-to-run CLI inputs for
+`generate`/`judge`/`calibrate`. `src/taxFixtures.ts` is the same six cases as TS data
+for tests (regenerate the JSONs on fixture changes):
 `secondary-then-primary` (pass), `primary-directly` (pass; secondary research is optional
 routing, not ritual), `skill-read-too-late` (meta1 false), `secondary-only` (meta2
 false), `correct-without-research` (meta1 na — trigger never fires; meta2 false — right
@@ -230,8 +242,9 @@ Test suite (zero network, `queuedCompletion` fake returning scripted JSON):
   reproduction of fixture verdicts from the checked-in `judge.yaml`. Don't add LLM calls
   without updating it.
 - `spec.test.ts` — loader happy paths (file, directory) + every rejection branch.
-- `generate.test.ts` — vocabulary extraction, enforcement demotion, scripted interviews
-  (answer sequences are order-sensitive; count prompts carefully when editing).
+- `env.test.ts` — nearest-`.env` discovery, parsing, and already-set-variables-win.
+- `generate.test.ts` — vocabulary extraction, unobserved-vocabulary flagging, scripted
+  interviews (answer sequences are order-sensitive; count prompts carefully when editing).
 - `cli.test.ts` — `captureMain` + `mkdtemp` temp dirs for all three commands, exit codes,
   help/version/unknown-command.
 
