@@ -7,6 +7,7 @@ import { parseArgs as parseNodeArgs } from "node:util";
 
 import { allDiagnostics, behaviorRecord, hasErrors, validatePath } from "agentbehavior";
 
+import { applyNearestDotEnv } from "./env.js";
 import { runInterview } from "./generate.js";
 import { completeWithBraintrustGateway, type JudgeCompletion } from "./gateway.js";
 import {
@@ -22,6 +23,11 @@ import { loadTrajectoryFile, type TrajectoryCase } from "./trajectory.js";
 export interface CliDeps {
   complete?: JudgeCompletion;
   ask?: (question: string) => Promise<string>;
+  /**
+   * Replaces the default nearest-`.env` loading; tests stub it so the real
+   * workspace `.env` never leaks into `process.env`.
+   */
+  loadEnv?: () => Promise<void>;
 }
 
 interface ParsedArgs {
@@ -78,9 +84,10 @@ Trajectory JSON files contain a trajectory ({id, complete, events}), a
 {trajectory, expected} wrapper, or an array of either.
 
 LLM calls go through the Braintrust Gateway (BRAINTRUST_API_KEY,
-BRAINTRUST_MODEL, BRAINTRUST_GATEWAY_BASE_URL). Without an API key, judge
-runs predicates only: semantic checks report na and predicate failures stay
-unverified.
+BRAINTRUST_MODEL, BRAINTRUST_GATEWAY_BASE_URL). Variables not already set in
+the environment are read from the nearest .env file at or above the working
+directory. Without an API key, judge runs predicates only: semantic checks
+report na and predicate failures stay unverified.
 `;
 }
 
@@ -329,6 +336,8 @@ export async function main(argv = process.argv.slice(2), deps: CliDeps = {}): Pr
     process.stdout.write(usage());
     return args.help ? 0 : 1;
   }
+
+  await (deps.loadEnv ?? applyNearestDotEnv)();
 
   try {
     if (args.command === "generate") return await runGenerateCommand(args, deps);

@@ -60,7 +60,10 @@ async function captureMain(
     return true;
   });
 
-  const exitCode = await main(argv, deps);
+  // Stub loadEnv so the repo's real .env never leaks into process.env: with a
+  // real BRAINTRUST_API_KEY loaded, the offline expectations below would make
+  // live gateway calls instead.
+  const exitCode = await main(argv, { loadEnv: () => Promise.resolve(), ...deps });
   return { exitCode, stdout, stderr };
 }
 
@@ -140,6 +143,32 @@ describe("behavior-judge judge", () => {
     const { exitCode, stderr } = await captureMain(["judge"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("judge requires an IR file");
+  });
+
+  it("runs the env loader before dispatching the command", async () => {
+    const directory = await writeFixtures({
+      "judge.yaml": predicateOnlyIr,
+      "trajectory.json": JSON.stringify(taxCase("secondary-then-primary").trajectory),
+    });
+    let loads = 0;
+
+    const { exitCode } = await captureMain(
+      [
+        "judge",
+        path.join(directory, "judge.yaml"),
+        path.join(directory, "trajectory.json"),
+        "--no-verify",
+      ],
+      {
+        loadEnv: () => {
+          loads += 1;
+          return Promise.resolve();
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(loads).toBe(1);
   });
 });
 

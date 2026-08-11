@@ -21,7 +21,9 @@ behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] 
 ```
 
 LLM calls go through the [Braintrust Gateway](https://www.braintrust.dev/docs/guides/proxy)
-(`BRAINTRUST_API_KEY`, `BRAINTRUST_MODEL`, `BRAINTRUST_GATEWAY_BASE_URL`). Without an API
+(`BRAINTRUST_API_KEY`, `BRAINTRUST_MODEL`, `BRAINTRUST_GATEWAY_BASE_URL`). Variables not
+already set in the environment are read from the nearest `.env` file at or above the
+working directory, so a gitignored `.env` at the repo root is enough. Without an API
 key everything still runs: semantic checks report `na` and predicate failures stay
 `unverified`.
 
