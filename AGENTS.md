@@ -197,6 +197,9 @@ gateway entirely — how all tests run.
 3. **One proposal LLM call**. `parseProposal` trick: wrap response JSON in
    `{version: 1, behavior, metaBehaviors}` → `stringifyYaml` → strict `parseIr` — reuses
    the IR validator so malformed proposals get path-labeled errors feeding the retry.
+   Then `normalizeProposal` capitalizes the first character of predicate trigger
+   descriptions and semantic check questions (semantic trigger descriptions are left
+   untouched — they feed judge-time question synthesis).
 4. Unobserved-vocabulary flagging (code-side, never trusts the model): matchers
    referencing an action/metadata key absent from the samples are detected via
    `vocabularySets`/`unobservedInTrigger`/`unobservedInCheck` and get a printed
@@ -209,8 +212,11 @@ gateway entirely — how all tests run.
    event as evidence; each check `[y/s/d]`; each semantic check `[y/e/d]`. Evidence lines
    show the matched event's id plus the metadata values the matcher binds to and its
    whitespace-flattened content clipped to 80 chars; a no-match on a `forbidden` matcher
-   is labeled expected. Metas with nothing left are dropped. Reject = demote-or-drop,
-   never regenerate.
+   is labeled expected. Edit prompts (rename, trigger description, semantic question)
+   pre-fill the readline buffer with the current text for in-place editing (TTY only;
+   the `ask` seam takes an optional `prefill`); retyped predicate trigger descriptions
+   and semantic questions are capitalized like proposed ones. Metas with nothing left
+   are dropped. Reject = demote-or-drop, never regenerate.
 6. Print YAML, final `[y/n]`, CLI writes to `--out` (default `judge.yaml` next to
    `BEHAVIOR.md`).
 

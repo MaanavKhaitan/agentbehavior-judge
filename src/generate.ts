@@ -114,7 +114,31 @@ ${JSON.stringify(vocabulary, null, 2)}`,
 export function parseProposal(response: string, behaviorName: string): JudgeIr {
   const parsed = parseJsonObject(response);
   const draft = { version: 1, behavior: behaviorName, metaBehaviors: parsed.metaBehaviors };
-  return parseIr(stringifyYaml(draft));
+  return normalizeProposal(parseIr(stringifyYaml(draft)));
+}
+
+function capitalizeFirst(text: string): string {
+  return text.length === 0 ? text : text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+// Cosmetic normalization of model-authored prose: predicate trigger
+// descriptions and semantic check questions start uppercase. Semantic trigger
+// descriptions are left untouched — they feed judge-time question synthesis.
+function normalizeProposal(ir: JudgeIr): JudgeIr {
+  return {
+    ...ir,
+    metaBehaviors: ir.metaBehaviors.map((meta) => ({
+      ...meta,
+      trigger:
+        "match" in meta.trigger
+          ? { ...meta.trigger, description: capitalizeFirst(meta.trigger.description) }
+          : meta.trigger,
+      semanticChecks: meta.semanticChecks.map((check) => ({
+        ...check,
+        question: capitalizeFirst(check.question),
+      })),
+    })),
+  };
 }
 
 function matchers(pattern: EventPattern): EventMatcher[] {
@@ -171,7 +195,8 @@ export function unobservedInCheck(check: PredicateCheck, sets: VocabularySets): 
 
 export interface InterviewDeps {
   complete: JudgeCompletion;
-  ask: (question: string) => Promise<string>;
+  /** `prefill` is editable default text placed in the input line (TTY only). */
+  ask: (question: string, prefill?: string) => Promise<string>;
   write: (line: string) => void;
 }
 
@@ -265,7 +290,7 @@ async function interviewNames(
     );
     if (answer === "d") continue;
     if (answer === "e") {
-      const name = (await deps.ask("New name: ")).trim();
+      const name = (await deps.ask("New name: ", meta.name)).trim();
       kept.push({ ...meta, name: name.length > 0 ? name : meta.name });
     } else {
       kept.push(meta);
@@ -294,8 +319,10 @@ async function interviewTrigger(
     ]);
     if (answer === "s") return { description: trigger.description, semantic: true };
     if (answer === "e") {
-      const description = (await deps.ask("New trigger description: ")).trim();
-      return description.length > 0 ? { ...trigger, description } : trigger;
+      const description = (await deps.ask("New trigger description: ", trigger.description)).trim();
+      return description.length > 0
+        ? { ...trigger, description: capitalizeFirst(description) }
+        : trigger;
     }
     return trigger;
   }
@@ -303,7 +330,7 @@ async function interviewTrigger(
   deps.write("  (semantic trigger: judged by one scoped LLM call)");
   const answer = await askChoice(deps, "[y] accept / [e] edit description", ["y", "e"]);
   if (answer === "e") {
-    const description = (await deps.ask("New trigger description: ")).trim();
+    const description = (await deps.ask("New trigger description: ", trigger.description)).trim();
     return description.length > 0 ? { description, semantic: true } : trigger;
   }
   return trigger;
@@ -374,8 +401,8 @@ async function interviewSemanticChecks(
     ]);
     if (answer === "d") continue;
     if (answer === "e") {
-      const question = (await deps.ask("New question: ")).trim();
-      kept.push(question.length > 0 ? { ...check, question } : check);
+      const question = (await deps.ask("New question: ", check.question)).trim();
+      kept.push(question.length > 0 ? { ...check, question: capitalizeFirst(question) } : check);
     } else {
       kept.push(check);
     }
