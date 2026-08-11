@@ -68,17 +68,25 @@ const proposal = {
 function scriptedDeps(
   proposalJson: string,
   answers: string[],
-): { deps: InterviewDeps; output: string[]; asked: string[] } {
+): {
+  deps: InterviewDeps;
+  output: string[];
+  asked: string[];
+  prefills: Array<string | undefined>;
+} {
   const output: string[] = [];
   const asked: string[] = [];
+  const prefills: Array<string | undefined> = [];
   const queue = [...answers];
   return {
     output,
     asked,
+    prefills,
     deps: {
       complete: () => Promise.resolve(proposalJson),
-      ask: (question) => {
+      ask: (question, prefill) => {
         asked.push(question);
+        prefills.push(prefill);
         return Promise.resolve(queue.shift() ?? "");
       },
       write: (line) => {
@@ -381,6 +389,58 @@ describe("runInterview", () => {
     expect(ir!.metaBehaviors[0]!.name).toBe("Consult primary sources before answering");
     expect(ir!.metaBehaviors[0]!.checks).toHaveLength(1);
     expect(ir!.metaBehaviors[0]!.semanticChecks).toEqual([]);
+  });
+
+  it("capitalizes predicate trigger descriptions and semantic questions from the proposal", async () => {
+    const lowercased = structuredClone(proposal);
+    lowercased.metaBehaviors[0]!.trigger.description = "the agent begins source research.";
+    lowercased.metaBehaviors[1]!.trigger.description = "the agent answers a tax question.";
+    lowercased.metaBehaviors[1]!.semanticChecks[0]!.question =
+      "does the final answer base its conclusion on the primary source?";
+
+    const { deps } = scriptedDeps(JSON.stringify(lowercased), ["y", "y", "y", "y", "y", "y"]);
+
+    const ir = await runInterview(
+      { behaviorName: "primary-source-tax-research", behaviorBody, trajectories },
+      deps,
+    );
+
+    expect(ir!.metaBehaviors[0]!.trigger.description).toBe("The agent begins source research.");
+    expect(ir!.metaBehaviors[1]!.semanticChecks[0]!.question).toBe(
+      "Does the final answer base its conclusion on the primary source?",
+    );
+    // Semantic trigger descriptions feed judge-time question synthesis and are
+    // deliberately left untouched.
+    expect(ir!.metaBehaviors[1]!.trigger.description).toBe("the agent answers a tax question.");
+  });
+
+  it("prefills edit prompts with the current text and capitalizes the retyped value", async () => {
+    // meta 1: trigger e + retype, check y; meta 2: trigger y, check y,
+    // semantic check e + retype; final confirm.
+    const { deps, prefills } = scriptedDeps(JSON.stringify(proposal), [
+      "e",
+      "reads or searches sources",
+      "y",
+      "y",
+      "y",
+      "e",
+      "does it base its conclusion on the primary source?",
+      "y",
+    ]);
+
+    const ir = await runInterview(
+      { behaviorName: "primary-source-tax-research", behaviorBody, trajectories },
+      deps,
+    );
+
+    expect(ir!.metaBehaviors[0]!.trigger.description).toBe("Reads or searches sources");
+    expect(ir!.metaBehaviors[1]!.semanticChecks[0]!.question).toBe(
+      "Does it base its conclusion on the primary source?",
+    );
+    expect(prefills.filter((prefill) => prefill !== undefined)).toEqual([
+      "The agent begins source research.",
+      "Does the final answer base its conclusion on the primary source?",
+    ]);
   });
 
   it("confirms proposed names when the spec has no H2 headings", async () => {
