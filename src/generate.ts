@@ -12,7 +12,7 @@ import {
   type SemanticCheck,
   type Trigger,
 } from "./ir.js";
-import { matchesAny } from "./predicates.js";
+import { matchesAny, matchesEvent } from "./predicates.js";
 import type { AgentTrajectory, TrajectoryEvent } from "./trajectory.js";
 
 export interface ActionVocabulary {
@@ -193,10 +193,39 @@ function firstMatch(
   return undefined;
 }
 
-function describeEvidence(trajectories: AgentTrajectory[], pattern: EventPattern): string {
+const EVIDENCE_PREFIX = "  evidence: ";
+const EVIDENCE_INDENT = " ".repeat(EVIDENCE_PREFIX.length);
+
+function clipContent(content: string, max = 80): string {
+  const flat = content.replaceAll(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+function writeEvidence(
+  deps: InterviewDeps,
+  trajectories: AgentTrajectory[],
+  pattern: EventPattern,
+  opts?: { noMatchIsExpected?: boolean },
+): void {
   const found = firstMatch(trajectories, pattern);
-  if (found === undefined) return "  evidence: no sample event matches";
-  return `  evidence: matches ${found.trajectory.id}/${found.event.id} (${found.event.actor} ${found.event.action})`;
+  if (found === undefined) {
+    deps.write(
+      opts?.noMatchIsExpected
+        ? `${EVIDENCE_PREFIX}no sample event matches (expected — well-behaved samples should not exhibit a forbidden event)`
+        : `${EVIDENCE_PREFIX}no sample event matches`,
+    );
+    return;
+  }
+  const { trajectory, event } = found;
+  deps.write(`${EVIDENCE_PREFIX}${trajectory.id}/${event.id} (${event.actor} ${event.action})`);
+  // Show the event's values for the metadata keys the matcher binds to —
+  // the part of the matcher the action name alone can't confirm.
+  const matched = matchers(pattern).find((matcher) => matchesEvent(event, matcher));
+  for (const key of Object.keys(matched?.metadata ?? {})) {
+    deps.write(`${EVIDENCE_INDENT}metadata.${key}: ${JSON.stringify(event.metadata?.[key] ?? "")}`);
+  }
+  const content = clipContent(event.content);
+  if (content.length > 0) deps.write(`${EVIDENCE_INDENT}content: ${JSON.stringify(content)}`);
 }
 
 function renderPattern(pattern: EventPattern): string {
@@ -256,7 +285,7 @@ async function interviewTrigger(
   deps.write(`Trigger: ${trigger.description}`);
   if ("match" in trigger) {
     deps.write(`  match: ${renderPattern(trigger.match)}`);
-    deps.write(describeEvidence(trajectories, trigger.match));
+    writeEvidence(deps, trajectories, trigger.match);
     writeUnobservedWarning(deps, unobservedInTrigger(trigger, sets));
     const answer = await askChoice(deps, "[y] accept / [s] force semantic / [e] edit description", [
       "y",
@@ -292,20 +321,22 @@ async function interviewChecks(
     deps.write(`Check (${check.type}): "${check.quote}"`);
     if (check.type === "ordering") {
       deps.write(`  first: ${renderPattern(check.first)}`);
-      deps.write(describeEvidence(trajectories, check.first));
+      writeEvidence(deps, trajectories, check.first);
       deps.write(`  before: ${renderPattern(check.before)}`);
-      deps.write(describeEvidence(trajectories, check.before));
+      writeEvidence(deps, trajectories, check.before);
     } else if (check.type === "pairing") {
       deps.write(`  each: ${renderPattern(check.each)}`);
-      deps.write(describeEvidence(trajectories, check.each));
+      writeEvidence(deps, trajectories, check.each);
       deps.write(`  followedBy: ${renderPattern(check.followedBy)}`);
-      deps.write(describeEvidence(trajectories, check.followedBy));
+      writeEvidence(deps, trajectories, check.followedBy);
     } else {
       deps.write(`  match: ${renderPattern(check.match)}`);
-      deps.write(describeEvidence(trajectories, check.match));
+      writeEvidence(deps, trajectories, check.match, {
+        noMatchIsExpected: check.type === "forbidden",
+      });
       if (check.after !== undefined) {
         deps.write(`  after: ${renderPattern(check.after)}`);
-        deps.write(describeEvidence(trajectories, check.after));
+        writeEvidence(deps, trajectories, check.after);
       }
       if (check.type === "count" && check.distinctBy !== undefined) {
         deps.write(`  distinctBy: ${check.distinctBy}`);

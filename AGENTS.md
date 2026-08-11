@@ -206,8 +206,11 @@ gateway entirely — how all tests run.
    `contentIncludes` is never vocabulary-checked.
 5. Interview (single-letter answers, empty = first option): if spec had no H2s, confirm/
    rename/drop proposed names; per meta: trigger `[y/s/e]` with first matching sample
-   event as evidence; each check `[y/s/d]`; each semantic check `[y/e/d]`. Metas with
-   nothing left are dropped. Reject = demote-or-drop, never regenerate.
+   event as evidence; each check `[y/s/d]`; each semantic check `[y/e/d]`. Evidence lines
+   show the matched event's id plus the metadata values the matcher binds to and its
+   whitespace-flattened content clipped to 80 chars; a no-match on a `forbidden` matcher
+   is labeled expected. Metas with nothing left are dropped. Reject = demote-or-drop,
+   never regenerate.
 6. Print YAML, final `[y/n]`, CLI writes to `--out` (default `judge.yaml` next to
    `BEHAVIOR.md`).
 
