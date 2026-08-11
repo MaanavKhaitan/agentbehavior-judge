@@ -213,12 +213,33 @@ gateway entirely — how all tests run.
 
 ## 11. Fixtures and tests
 
-`examples/primary-source-tax-research/` holds the example spec, the **checked-in
-reference IR** (`judge.yaml` — compile target, test fixture for `ir.test.ts`/
-`judge.test.ts` via relative URL, and docs artifact), and per-case
-`{trajectory, expected}` JSONs under `trajectories/` — ready-to-run CLI inputs for
-`generate`/`judge`/`calibrate`. `src/taxFixtures.ts` is the same six cases as TS data
-for tests (regenerate the JSONs on fixture changes):
+Three example dirs under `examples/`, each with `BEHAVIOR.md` + checked-in `judge.yaml`
+
+- labeled `{trajectory, expected}` JSONs under `trajectories/` — ready-to-run CLI inputs
+  for `generate`/`judge`/`calibrate`:
+
+* `primary-source-tax-research/` — the semantic showcase (semantic trigger + semantic
+  check). Its `judge.yaml` is the reference IR fixture for `ir.test.ts`/`judge.test.ts`
+  via relative URL. `src/taxFixtures.ts` is the same six cases as TS data for tests
+  (regenerate the JSONs on fixture changes).
+* `verified-refund-support/` and `staged-rollout-deploys/` — **predicate-only** examples
+  (all triggers and checks deterministic; between them they cover all five predicate
+  types plus `after:`, `distinctBy`, `contentIncludes`, and any-of patterns).
+  `src/examples.test.ts` re-derives every checked-in expected verdict offline with a
+  throwing completion seam — if you edit these fixtures or IRs, the expected labels must
+  stay reproducible with zero LLM calls. Their trajectories are deliberate traps for
+  holistic LLM judges (buried forbidden events, distinct-count, attempts-vs-outcomes,
+  claim-vs-event, incomplete-trace na discipline); per-example READMEs record measured
+  calibration comparisons.
+* `scripts/upstream-calibrate.mjs` — self-contained port of the upstream repo's one-call
+  LLM example judge (Apache-2.0 attribution in header); reads the same labeled fixture
+  files and prints the same agreement report as `calibrate`, so the two judging
+  architectures can be compared case for case (`--runs N` for stability checks). Keep
+  BEHAVIOR.md paragraphs unwrapped (one line per paragraph, like all three examples):
+  the upstream judge must quote violated clauses verbatim from the H2, and mid-sentence
+  hard wraps make that mechanically impossible.
+
+Tax fixture cases:
 `secondary-then-primary` (pass), `primary-directly` (pass; secondary research is optional
 routing, not ritual), `skill-read-too-late` (meta1 false), `secondary-only` (meta2
 false), `correct-without-research` (meta1 na — trigger never fires; meta2 false — right
@@ -241,6 +262,9 @@ Test suite (zero network, `queuedCompletion` fake returning scripted JSON):
   retry-once (bad-then-good ok; bad-bad throws), unknown-event citations rejected; plus
   reproduction of fixture verdicts from the checked-in `judge.yaml`. Don't add LLM calls
   without updating it.
+- `examples.test.ts` — round-trips the two predicate-only example IRs and re-derives
+  every expected verdict in their trajectory files offline (throwing completion seam,
+  `verify: false`): the checked-in labels ARE the deterministic layer's output.
 - `spec.test.ts` — loader happy paths (file, directory) + every rejection branch.
 - `env.test.ts` — nearest-`.env` discovery, parsing, and already-set-variables-win.
 - `generate.test.ts` — vocabulary extraction, unobserved-vocabulary flagging, scripted

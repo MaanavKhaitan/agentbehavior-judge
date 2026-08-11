@@ -151,6 +151,54 @@ meta agreement 12/12, file agreement 6/6
 
 `calibrate` exits 1 on any disagreement, so it can gate CI.
 
+## More examples: predicate-only judges
+
+Two further examples cover the remaining predicate types and need no LLM at all to reach
+their expected verdicts (their triggers and checks are all deterministic;
+`src/examples.test.ts` re-derives every checked-in verdict offline in CI):
+
+- [`examples/verified-refund-support/`](examples/verified-refund-support/) — a
+  customer-support refund agent: `ordering` (passed identity verification before any
+  account change), `pairing` (every refund followed by a case note), `forbidden` (never
+  fetch a full card number), and `count` with `max` (at most two refund _attempts_).
+- [`examples/staged-rollout-deploys/`](examples/staged-rollout-deploys/) — an SRE deploy
+  agent: `ordering` on event metadata (canary stage before fleet stage), `pairing`
+  (health-check every deploy), `forbidden` scoped by `after:` to a change-freeze window
+  opened by a `contentIncludes` match, and `count` with `min` + `distinctBy` (healthy
+  canary results from three _distinct_ hosts).
+
+Their fixtures are built around the places where holistic LLM judges drift: a forbidden
+event buried in a 41-event session, six healthy checks that only touch two distinct
+hosts, retries that make three attempts look like two refunds, "I logged it" claims with
+no logging event, and incomplete traces where absence is `insufficient_evidence` rather
+than a violation.
+
+## Comparing against a one-call LLM judge
+
+The upstream Agent Behavior repo ships an example judge that evaluates the whole spec in
+one monolithic LLM call. [`scripts/upstream-calibrate.mjs`](scripts/upstream-calibrate.mjs)
+ports that judge verbatim and runs it over the same labeled trajectory files, printing
+the same agreement report as `calibrate`:
+
+```console
+$ node scripts/upstream-calibrate.mjs examples/verified-refund-support/BEHAVIOR.md \
+    examples/verified-refund-support/trajectories/*.json --runs 3
+```
+
+Measured 2026-08-11, default model (`gpt-5-mini`) for both judges, four runs each:
+
+| Example                 | `behavior-judge`                | Upstream one-call judge                            |
+| ----------------------- | ------------------------------- | -------------------------------------------------- |
+| verified-refund-support | meta 28/28, file 7/7 (all runs) | meta 20–28/28, file 5–7/7 (perfect in 1 of 4 runs) |
+| staged-rollout-deploys  | meta 28/28, file 7/7 (all runs) | meta 26–28/28, file 6–7/7 (perfect in 1 of 4 runs) |
+
+The disagreements are the designed traps: the one-call judge blanket-NAs incomplete
+traces whose observed conduct is still judgeable, misses NA discipline in incomplete
+traces where the triggering event never arrived, and (run-dependently) miscounts pairs
+and misreads the count clauses. The predicate layer decides all of that
+deterministically and identically on every run; per-example READMEs carry the detailed
+tables.
+
 ## Generating an IR for your own spec
 
 ```console
