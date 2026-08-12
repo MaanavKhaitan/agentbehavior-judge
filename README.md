@@ -1,59 +1,46 @@
-# behavior-judge
+![behavior-judge logo](docs/assets/logo.png)
 
-Compile an [Agent Behavior](https://github.com/braintrustdata/agentbehavior) spec into an
-executable, checked-in judge for long-horizon agent trajectories — deterministic where
-LLM judges drift, auditable down to the spec clause, with the model reserved for the few
-judgments only it can make.
+[GITHUB REPO status here]
+
+Long-horizon agents are hard to evaluate. [Agent Behavior](https://github.com/braintrustdata/agentbehavior) specs tackle this by observing the process agents take to get to outcomes. `behavior-judge` compiles an Agent Behavior spec into an executable judge for long-horizon agent trajectories, with deterministic checks for most common agent behaviors.
 
 ## Why
 
-Long-horizon agents are hard to evaluate. Real-world tasks run for hours or days,
-ground truth is scarce, and an agent can reach the right answer through a process
-nobody should trust — a tax agent answering from pretraining instead of verifying
-against primary sources still passes an outcome eval. The
+Real-world tasks run for days or weeks, are not easily verifiable, and an agent can reach the right answer through the wrong process (i.e. a tax agent answering from pretraining instead of verifying
+against primary sources still passes an outcome eval). The
 [Agent Behavior standard](https://github.com/braintrustdata/agentbehavior), open-sourced
-by [Braintrust](https://www.braintrust.dev) together with Basis
+by [Braintrust](https://www.braintrust.dev) and [Basis](https://www.getbasis.ai/)
 ([launch thread](https://x.com/mitch_troy/status/2082513195357307158)), tackles this
 with process supervision: write down how the agent should behave in a freeform
-`BEHAVIOR.md` and judge trajectories against it — no ground truth required, so every
-trajectory yields signal.
+`BEHAVIOR.md` and ask a model to judge trajectories against it.
 
-Behavior specs deliberately say nothing about _how_ to judge, and the default is to
-hand the spec and the whole trajectory to one big LLM call. But read through enough
-specs and a pattern emerges: most behaviors we expect from long-horizon agents —
-verify identity before changing the account, read the skill before researching, never
-touch a full card number — codify into a small common set of checks over trajectory
-events. `behavior-judge` builds on the Agent Behavior project by compiling a spec into
-exactly that: a YAML judge you check in and review like code. Judging stays declarative
-— the judge states what must hold, not how to scan for it — but becomes deterministic
-and consistent from run to run, with the LLM confined to the few narrowly scoped calls
-that genuinely need semantic judgment. Every verdict traces back to a verbatim quote
-from the spec plus the IDs of the events that decided it.
+[DIAGRAM HERE of agent behavior data flow]
 
-Zooming out, this is one instance of a pattern we expect to matter broadly: codifying
-semantic judges into deterministic, auditable checks, so the loops that evaluate and
-improve agents run on signal you can actually verify.
+We notice a pattern: most behaviors we expect from long-horizon agents codify into a common set of checks over trajectory events. For example, checking the agent does X before Y, or ensuring the agent never does X. 
+
+[DIAGRAM HERE of most common checks]
+
+`behavior-judge` builds on the Agent Behavior project by taking a behavior spec + agent trajectories as input and compiling them into a YAML representation of deterministic rules. Judging becomes more consistent from run to run, with the LLM confined to the few narrowly scoped checks that need semantic judgement. Every verdict is backed with evidence from the spec and trajectory events.
+
+[DIAGRAM HERE of behavior-judge data flow]
+
+Codifying semantic judges into deterministic checks can help make the loops that evaluate and improve agents become more easily verifiable.
 
 ## The checks
 
 A compiled judge is a list of rules, each with a **trigger** ("does this rule apply
-here at all?" — an untriggered rule is `n/a`, never a failure) and two kinds of checks:
+here at all?") and two kinds of checks:
 
 - **Five deterministic predicates** over trajectory events: `ordering` (X before Y),
   `pairing` (every X later followed by Y), `required`, `forbidden`, and `count`
   (min/max, optionally over distinct values), plus an `after:` scope for "once X
-  happens…" clauses. If you know runtime verification, you've met these before —
-  they're the classic property-specification patterns (precedence, response, existence,
-  absence, bounded existence) wearing YAML.
+  happens…" clauses.
 - **Semantic checks**: one narrowly scoped LLM question per clause that no event
-  pattern can express ("does the answer rely on the source it read?"), each answer
-  validated to cite real events.
+  pattern can express ("does the answer rely on the source it read?").
 
-Verdicts are three-valued: a violation visible in the trace is `false` even if the
-trace is incomplete, but absence in an unfinished trace is `insufficient_evidence` —
-never a failure.
+## Running `behavior-judge`
 
-## Install & build
+### Install and build
 
 Requires Node ≥ 20 and [pnpm](https://pnpm.io).
 
@@ -66,59 +53,60 @@ $ pnpm link --global      # optional: puts `behavior-judge` on your PATH
 LLM calls go through the
 [Braintrust Gateway](https://www.braintrust.dev/docs/guides/proxy): put
 `BRAINTRUST_API_KEY` in a `.env` at the repo root (the model defaults to `gpt-5-mini`;
-override with `BRAINTRUST_MODEL`). Without a key everything still runs offline:
-predicates evaluate, semantic clauses report `na`.
+override with `BRAINTRUST_MODEL`).
 
-## Use
+### Generate a judge from behavior spec
 
 ```
-behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--no-web]
-behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--no-verify] [--no-web]
+behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>]
+```
+
+Reads your behavior spec + sample trajectories to determine how to compile your desired agent behaviors to deterministic checks. It then drafts a judge and runs an in-browser interview with you to confirm the relevant checks and event vocabulary your trajectories actually use. Writes `judge.yaml` next to the spec.
+
+[SCREENSHOT OF THE GENERATE PAGE]
+
+### Run the judge on agent trajectories
+
+```
+behavior-judge judge  <ir.yaml> <trajectory.json ...> [--json]
+```
+
+Runs a judge over trajectories. Deterministic checks are free; the LLM handles semantic clauses + confirming failures of any deterministic checks. The report renders in your browser by default.
+
+[SCREENSHOT OF THE JUDGE REPORT]
+
+### Update the judge after behavior spec changes
+
+```
+behavior-judge generate  --update judge.yaml <behavior-path> <trajectory.json ...>
+```
+
+After a spec edit, re-interviews only what changed; unchanged sections carry over.
+
+### Calibrate the judge
+
+```
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json]
 ```
 
-Trajectories are JSON — `{id, complete, events: [{id, actor, action, content,
-metadata?}, ...]}` (an instrumentation convention of this tool, not part of the
-standard).
-
-- **`generate`** — one LLM call drafts a judge bound to the event vocabulary your
-  sample trajectories actually use, then an interview (in your browser by default, or
-  the terminal with `--no-web`) walks you through every trigger and check with matching
-  events shown as evidence: accept, edit, demote to a semantic check, or drop. Writes
-  `judge.yaml` next to the spec. Hand-writing the YAML is equally supported.
-- **`judge`** — runs a judge over trajectories. Predicates are free; the LLM handles
-  semantic clauses plus one confirmation call per predicate failure (a matcher can trip
-  on an event the clause didn't mean). The report renders in your browser by default;
-  `--no-web` or `--json` keeps it in the terminal.
-- **`generate --update judge.yaml`** — after a spec edit, re-interviews only what
-  changed; unchanged sections carry over with zero questions and zero LLM calls.
-- **`calibrate`** — compares verdicts against labeled trajectories
-  (`{trajectory, expected}` files) and exits non-zero on any disagreement, so it can
-  gate CI.
+Compare the judge's verdicts against labeled trajectories (`{trajectory, expected}` files) and exits non-zero on any disagreement.
 
 ## Examples
 
 Three ready-to-run examples live under [`examples/`](examples/), each with a
 `BEHAVIOR.md`, a checked-in `judge.yaml`, and labeled trajectories:
 
-- [`primary-source-tax-research/`](examples/primary-source-tax-research/) — the
-  semantic showcase (LLM trigger + semantic check), derived from the upstream repo's
-  example.
-- [`verified-refund-support/`](examples/verified-refund-support/) — predicate-only: a
+- [`primary-source-tax-research/`](examples/primary-source-tax-research/) — A tax research agent, derived from the Agent Behavior repo.
+- [`verified-refund-support/`](examples/verified-refund-support/) — deterministic-only; A
   support agent that must verify identity before account changes, log every refund, and
   never touch a full card number.
-- [`staged-rollout-deploys/`](examples/staged-rollout-deploys/) — predicate-only: an
+- [`staged-rollout-deploys/`](examples/staged-rollout-deploys/) — deterministic-only; An
   SRE agent that must canary before fleet-wide deploys and respect change freezes.
 
 ```console
 $ behavior-judge judge examples/primary-source-tax-research/judge.yaml \
     examples/primary-source-tax-research/trajectories/skill-read-too-late.json
 ```
-
-On the two predicate-only suites, this judge matched all 720 labeled meta-verdicts
-across repeated runs (byte-identical each time); the upstream one-call LLM judge scored
-682/720. Methodology and per-case breakdowns are in
-[docs/DETAILS.md](docs/DETAILS.md).
 
 ## What a compiled judge looks like
 
