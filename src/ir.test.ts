@@ -185,6 +185,28 @@ metaBehaviors:
     const source = minimalIr.replace("type: required", "type: count");
     expect(() => parseIr(source)).toThrow(/count check must set min and\/or max/);
   });
+
+  it("parses and round-trips the optional source field", () => {
+    const withSource = `${minimalIr}    source: |-
+      The agent searches the web before answering.
+
+      Each question is one occurrence.
+`;
+    const ir = parseIr(withSource);
+    expect(ir.metaBehaviors[0]!.source).toBe(
+      "The agent searches the web before answering.\n\nEach question is one occurrence.",
+    );
+    expect(parseIr(serializeIr(ir))).toEqual(ir);
+    expect(parseIr(minimalIr).metaBehaviors[0]!.source).toBeUndefined();
+  });
+
+  it("rejects an empty source", () => {
+    const withEmptySource = `${minimalIr}    source: ""
+`;
+    expect(() => parseIr(withEmptySource)).toThrow(
+      /metaBehaviors\[0\]\.source: must be a non-empty string/,
+    );
+  });
 });
 
 describe("verdict folding", () => {
