@@ -5,6 +5,8 @@
  * packed or exported.
  */
 
+import { openSnapshotStream, SnapshotClient } from "./sseTestClient.js";
+
 export interface ReportSnapshot {
   revision: number;
   behavior: string;
@@ -18,58 +20,13 @@ export interface ReportSnapshot {
   };
 }
 
-export class ReportClient {
-  private buffer = "";
-  private readonly decoder = new TextDecoder();
-  private readonly queue: ReportSnapshot[] = [];
-
-  private constructor(
-    private readonly origin: string,
-    private readonly token: string,
-    private readonly reader: ReadableStreamDefaultReader<Uint8Array>,
-  ) {}
-
+export class ReportClient extends SnapshotClient<ReportSnapshot> {
   static async connect(url: string): Promise<ReportClient> {
-    const parsed = new URL(url);
-    const token = parsed.searchParams.get("token") ?? "";
-    const response = await fetch(`${parsed.origin}/events?token=${encodeURIComponent(token)}`);
-    if (!response.ok || response.body === null) {
-      throw new Error(`events stream connect failed with status ${response.status}`);
-    }
-    return new ReportClient(parsed.origin, token, response.body.getReader());
+    return new ReportClient(await openSnapshotStream(url));
   }
 
-  /** Next snapshot pushed by the server (the connect-time state counts). */
-  async next(): Promise<ReportSnapshot> {
-    for (;;) {
-      const queued = this.queue.shift();
-      if (queued !== undefined) return queued;
-      const { done, value } = await this.reader.read();
-      if (done) throw new Error("event stream ended before the expected snapshot");
-      this.buffer += this.decoder.decode(value, { stream: true });
-      let boundary: number;
-      while ((boundary = this.buffer.indexOf("\n\n")) !== -1) {
-        const frame = this.buffer.slice(0, boundary);
-        this.buffer = this.buffer.slice(boundary + 2);
-        for (const line of frame.split("\n")) {
-          if (line.startsWith("data: ")) {
-            this.queue.push(JSON.parse(line.slice("data: ".length)) as ReportSnapshot);
-          }
-        }
-      }
-    }
-  }
-
-  async ack(): Promise<number> {
-    const response = await fetch(`${this.origin}/ack?token=${encodeURIComponent(this.token)}`, {
-      method: "POST",
-    });
-    await response.arrayBuffer();
-    return response.status;
-  }
-
-  close(): void {
-    void this.reader.cancel().catch(() => {});
+  ack(): Promise<number> {
+    return this.post("/ack");
   }
 }
 

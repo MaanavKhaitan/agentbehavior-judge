@@ -1,11 +1,9 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
-
 import type { JudgeIr, MetaBehaviorIr } from "./ir.js";
 import type { ClauseResult, MetaBehaviorResult, TrajectoryJudgment } from "./judge.js";
+import { clip } from "./text.js";
 import type { AgentTrajectory, TrajectoryCase, TrajectoryEvent } from "./trajectory.js";
 import { REPORT_PAGE_HTML } from "./webReportPage.js";
+import { SnapshotSession, startWebServer } from "./webServer.js";
 
 /**
  * Browser presentation of the judge report (`judge --web`).
@@ -18,8 +16,8 @@ import { REPORT_PAGE_HTML } from "./webReportPage.js";
  * handshake is what lets the CLI exit while guaranteeing a browser actually
  * received the report before the server disappears.
  *
- * Same locality posture as the interview: 127.0.0.1 only, and every route
- * requires the one-time token embedded in the printed URL.
+ * Server plumbing (127.0.0.1-only, one-time token on every route) lives in
+ * webServer.ts, shared with the interview server.
  */
 
 export interface WebReportOptions {
@@ -46,11 +44,6 @@ type ReportState =
   | { type: "error"; message: string };
 
 const EVIDENCE_CONTENT_MAX = 200;
-
-function clip(content: string, max: number): string {
-  const flat = content.replaceAll(/\s+/g, " ").trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
-}
 
 function citedEventPayload(event: TrajectoryEvent): Record<string, unknown> {
   return {
@@ -137,17 +130,16 @@ function judgmentPayload(
   };
 }
 
-class WebReportSession {
-  private revision = 0;
-  private state: ReportState = { type: "judging", done: 0, total: 0, judgingId: "", judgments: [] };
-  private readonly clients = new Set<ServerResponse>();
+class WebReportSession extends SnapshotSession<ReportState> {
   private resolveAck!: () => void;
   /** Resolves once a page has rendered the final report and posted /ack. */
   readonly acked = new Promise<void>((resolve) => {
     this.resolveAck = resolve;
   });
 
-  constructor(private readonly behavior: string) {}
+  constructor(behavior: string) {
+    super(behavior, { type: "judging", done: 0, total: 0, judgingId: "", judgments: [] });
+  }
 
   setJudging(
     done: number,
@@ -172,90 +164,6 @@ class WebReportSession {
     this.resolveAck();
     return 200;
   }
-
-  attach(res: ServerResponse): void {
-    this.clients.add(res);
-    res.write(this.snapshotFrame());
-  }
-
-  detach(res: ServerResponse): void {
-    this.clients.delete(res);
-  }
-
-  closeClients(): void {
-    for (const client of this.clients) client.end();
-    this.clients.clear();
-  }
-
-  private setState(state: ReportState): void {
-    this.state = state;
-    this.revision += 1;
-    const frame = this.snapshotFrame();
-    for (const client of this.clients) client.write(frame);
-  }
-
-  private snapshotFrame(): string {
-    const snapshot = { revision: this.revision, behavior: this.behavior, state: this.state };
-    return `data: ${JSON.stringify(snapshot)}\n\n`;
-  }
-}
-
-function tokenMatches(provided: string | null, token: string): boolean {
-  if (provided === null) return false;
-  const providedBuffer = Buffer.from(provided);
-  const tokenBuffer = Buffer.from(token);
-  return (
-    providedBuffer.length === tokenBuffer.length && timingSafeEqual(providedBuffer, tokenBuffer)
-  );
-}
-
-function handleRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
-  token: string,
-  session: WebReportSession,
-): void {
-  const url = new URL(req.url ?? "/", "http://localhost");
-  if (url.pathname === "/favicon.ico") {
-    res.writeHead(204).end();
-    return;
-  }
-  if (!tokenMatches(url.searchParams.get("token"), token)) {
-    res.writeHead(403, { "content-type": "text/plain" }).end("Forbidden");
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/") {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(REPORT_PAGE_HTML);
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/events") {
-    res.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-store",
-      connection: "keep-alive",
-    });
-    session.attach(res);
-    const ping = setInterval(() => {
-      res.write(": ping\n\n");
-    }, 15000);
-    ping.unref();
-    req.on("close", () => {
-      clearInterval(ping);
-      session.detach(res);
-    });
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/ack") {
-    const status = session.ack();
-    res.writeHead(status, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: status === 200 }));
-    return;
-  }
-
-  res.writeHead(404, { "content-type": "text/plain" }).end("Not found");
 }
 
 /**
@@ -263,23 +171,16 @@ function handleRequest(
  * the judgments once the rendered report has been acknowledged by the page.
  */
 export async function runWebReport(options: WebReportOptions): Promise<TrajectoryJudgment[]> {
-  const token = randomBytes(16).toString("hex");
   const session = new WebReportSession(options.ir.behavior);
-  const server = createServer((req, res) => {
-    handleRequest(req, res, token, session);
+  const server = await startWebServer({
+    pageHtml: REPORT_PAGE_HTML,
+    session,
+    post: { "/ack": () => session.ack() },
+    port: options.port,
   });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port ?? 0, "127.0.0.1", () => {
-      resolve();
-    });
-  });
-  const { port } = server.address() as AddressInfo;
-  const url = `http://127.0.0.1:${port}/?token=${token}`;
-  options.log(`Report running at ${url}`);
+  options.log(`Report running at ${server.url}`);
   options.log("The CLI exits once the report has loaded in your browser; Ctrl-C aborts.");
-  options.openBrowser?.(url);
+  options.openBrowser?.(server.url);
 
   try {
     const irByName = new Map(options.ir.metaBehaviors.map((meta) => [meta.name, meta]));
@@ -298,13 +199,6 @@ export async function runWebReport(options: WebReportOptions): Promise<Trajector
     session.fail(error instanceof Error ? error.message : String(error));
     throw error;
   } finally {
-    session.closeClients();
-    await new Promise<void>((resolve) => {
-      server.close(() => {
-        resolve();
-      });
-      // Keep-alive sockets from ack posts would otherwise stall close().
-      server.closeAllConnections();
-    });
+    await server.close();
   }
 }

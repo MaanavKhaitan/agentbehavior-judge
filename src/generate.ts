@@ -13,6 +13,7 @@ import {
   type Trigger,
 } from "./ir.js";
 import { matchesAny, matchesEvent } from "./predicates.js";
+import { clip } from "./text.js";
 import type { AgentTrajectory, TrajectoryEvent } from "./trajectory.js";
 
 export interface ActionVocabulary {
@@ -494,11 +495,7 @@ function checkEvidence(check: PredicateCheck, trajectories: AgentTrajectory[]): 
 
 const EVIDENCE_PREFIX = "  evidence: ";
 const EVIDENCE_INDENT = " ".repeat(EVIDENCE_PREFIX.length);
-
-function clipContent(content: string, max = 80): string {
-  const flat = content.replaceAll(/\s+/g, " ").trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
-}
+const EVIDENCE_CONTENT_MAX = 80;
 
 export function renderPattern(pattern: EventPattern): string {
   return JSON.stringify(pattern);
@@ -523,7 +520,7 @@ export function writeEvidenceLines(
   for (const key of Object.keys(matcher.metadata ?? {})) {
     deps.write(`${EVIDENCE_INDENT}metadata.${key}: ${JSON.stringify(event.metadata?.[key] ?? "")}`);
   }
-  const content = clipContent(event.content);
+  const content = clip(event.content, EVIDENCE_CONTENT_MAX);
   if (content.length > 0) deps.write(`${EVIDENCE_INDENT}content: ${JSON.stringify(content)}`);
 }
 
