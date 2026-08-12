@@ -41,13 +41,15 @@ gateway client derive from that repo's examples.
 ## 3. CLI surface
 
 ```
-behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>] [--model <m>]
+behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>]
 behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 ```
 
 Exit codes: `judge` 0 on successful run; `calibrate` 1 on any expected/actual
 disagreement (CI gate); `generate` 1 if the user declines the final confirm. Errors → 1.
+`generate --update <ir.yaml>` is the diff-scoped re-interview after a spec edit (§10);
+`--out` then defaults to the `--update` path.
 
 ## 4. Source map (`src/`, dependency order)
 
@@ -70,9 +72,18 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
   `buildVerifyFalseMessages`.
 - `judge.ts` — orchestrator `judgeTrajectory` (all judging policy lives here),
   `resolveCompletion` (offline detection), result types, `compareToExpected`.
-- `generate.ts` — H2 extraction, `extractVocabulary`, proposal prompt + `parseProposal`,
-  unobserved-vocabulary flagging (`vocabularySets`/`unobservedInTrigger`/
-  `unobservedInCheck`), `runInterview` (seams: `complete`/`ask`/`write`).
+- `generate.ts` — H2 extraction (`splitSpecSections`/`normalizeSectionBody`),
+  `extractVocabulary`, proposal prompt + `parseProposal`, unobserved-vocabulary flagging
+  (`vocabularySets`/`unobservedInTrigger`/`unobservedInCheck`), `runInterview` (seams:
+  `complete`/`ask`/`write`); also exports the per-item interview helpers
+  (`interviewTrigger`/`interviewChecks`/`interviewSemanticChecks`) that `update.ts` reuses.
+- `update.ts` — diff-scoped regeneration behind `generate --update`: `planUpdate` maps
+  existing metas onto the edited spec's sections via the recorded `source` bodies
+  (unchanged/changed/added + removed), `computeSectionDelta` splits a changed
+  section's clauses into carried/dropped/new by verbatim quote survival, one scoped
+  proposal call covers all changed+added sections, one demote-only triage call per
+  changed section flags carried clauses the edit may have re-scoped, and
+  `runUpdateInterview` asks only about the deltas.
 - `env.ts` — nearest-`.env` discovery (`loadNearestDotEnv`/`applyNearestDotEnv`): the CLI
   fills `process.env` from the closest `.env` at or above cwd; already-set variables win.
   CLI-only concern, not exported from `index.ts`; `cli.test.ts`'s `captureMain` stubs the
@@ -111,12 +122,17 @@ metaBehaviors:
       - { type: count, quote, match: <pattern>, min?, max?, after?: <pattern>, distinctBy? } # needs min and/or max; distinctBy is "content" or "metadata.<key>"
     semanticChecks:
       - { quote, question }
+    source: <normalized H2 section body> # optional, machine-maintained
 ```
 
 - **Naming:** `EventMatcher` = one pattern, AND across its fields (`action`/`actor`/
   `contentIncludes`/`metadata`). `EventPattern` (TS type) = one matcher or an array
   meaning **any-of** (OR). YAML keys stay `match:`/`first:`/`before:`/`each:`/`followedBy:`/`after:`.
 - Every check carries a verbatim `quote` from the spec (traceability requirement).
+- `source` (optional) records the normalized spec section body the meta was last
+  generated or reviewed against; `generate --update` compares it against the current
+  spec to carry unchanged sections without questions. `generate` writes it for H2 specs;
+  don't hand-edit it. Judging ignores it.
 - `after:` (required/forbidden/count only) scopes the check to events strictly after the
   first `after`-match; no `after`-match → `na` by completeness. `distinctBy` (count only)
   counts distinct `content` or `metadata.<key>` values; matches missing the key don't count.
@@ -217,14 +233,54 @@ gateway entirely — how all tests run.
    the `ask` seam takes an optional `prefill`); retyped predicate trigger descriptions
    and semantic questions are capitalized like proposed ones. Metas with nothing left
    are dropped. Reject = demote-or-drop, never regenerate.
-6. Print YAML, final `[y/n]`, CLI writes to `--out` (default `judge.yaml` next to
-   `BEHAVIOR.md`).
+6. Each kept meta records its H2 section body (normalized) as `source` — the anchor
+   `--update` diffs against later. Print YAML, final `[y/n]`, CLI writes to `--out`
+   (default `judge.yaml` next to `BEHAVIOR.md`).
+
+### `generate --update <existing.yaml>` (diff-scoped re-interview, `update.ts`)
+
+After a spec edit, re-interviews only what changed instead of re-running the full flow.
+All change detection is deterministic and code-side; the two LLM calls it can make are
+scoped and validated, and neither can shrink the review:
+
+- **Plan** (`planUpdate`): per current-spec section — body equals the meta's recorded
+  `source` → carried verbatim, zero questions, zero LLM; new heading → proposed and
+  interviewed like plain generate; section gone → meta dropped with a note (a pure
+  heading rename therefore reads as removed + added and re-interviews that one section).
+  A meta without `source` (e.g. a hand-written IR) is conservatively treated as changed.
+  A spec with no H2s is an error (run plain generate). Nothing changed → zero LLM calls,
+  one final confirm.
+- **One shared proposal call** covers all changed+added sections (changed ones include
+  the previous meta IR and "revise minimally"); `parseUpdateProposal` reuses
+  `parseProposal` then enforces exactly the requested names and every quote verbatim in
+  its section, feeding the retry.
+- **Mechanical delta** (`computeSectionDelta`) for a changed section: existing clauses
+  whose quotes survive verbatim are carried **from the existing yaml** (proposal drift
+  for a surviving quote is discarded — the human already approved that clause, and hand
+  edits survive); vanished quotes drop with a note; proposal clauses with new quotes are
+  interviewed normally. Predicate triggers compare by match pattern (description is
+  cosmetic), semantic triggers by description; a differing trigger gets a
+  `[y/p/s/e]` question (`p` = keep previous).
+- **Demote-only triage**, one call per changed section with carried clauses: given the
+  old (`source`) and new section texts, the model flags carried clauses the edit may
+  have re-scoped (e.g. a redefined term a matcher relies on). `re_ask` moves a clause
+  from the batch confirm to an individual question with the reason printed; the model
+  cannot expand the carried set or alter clauses. Echo-back validation: every listed id
+  exactly once, verdict enum, non-empty reason. No `source` → triage impossible → every
+  carried clause is re-asked (the safe ceiling).
+- Unflagged carried clauses get one batch confirm (`Keep these? [y/n]`); `n` falls
+  through to individual review of each.
+- `--out` defaults to the `--update` path. Run `calibrate` afterwards: it is the safety
+  net for a carried clause whose meaning drifted past both the quote check and triage.
 
 ## 11. Fixtures and tests
 
 Three example dirs under `examples/`, each holding `BEHAVIOR.md`, a checked-in
 `judge.yaml`, and labeled `{trajectory, expected}` JSONs under `trajectories/` —
-ready-to-run CLI inputs for `generate`/`judge`/`calibrate`:
+ready-to-run CLI inputs for `generate`/`judge`/`calibrate`. All three `judge.yaml`s
+carry per-meta `source` fields (so `--update` works on them out of the box);
+`examples.test.ts` asserts every `source` byte-matches its BEHAVIOR.md section, so
+editing a spec means refreshing the IR's `source` too:
 
 - `primary-source-tax-research/` — the semantic showcase (semantic trigger + semantic
   check). Its `judge.yaml` is the reference IR fixture for `ir.test.ts`/`judge.test.ts`
@@ -280,10 +336,17 @@ Test suite (zero network, `queuedCompletion` fake returning scripted JSON):
   `verify: false`): the checked-in labels ARE the deterministic layer's output.
 - `spec.test.ts` — loader happy paths (file, directory) + every rejection branch.
 - `env.test.ts` — nearest-`.env` discovery, parsing, and already-set-variables-win.
-- `generate.test.ts` — vocabulary extraction, unobserved-vocabulary flagging, scripted
-  interviews (answer sequences are order-sensitive; count prompts carefully when editing).
+- `generate.test.ts` — vocabulary extraction, unobserved-vocabulary flagging, section
+  splitting/normalization, `source` attachment, scripted interviews (answer sequences
+  are order-sensitive; count prompts carefully when editing).
+- `update.test.ts` — plan classification (unchanged/changed/added/removed,
+  no-source → changed), delta rules (quote survival, drift discarded, drops), update
+  proposal validation, triage echo-back parsing, and scripted update interviews:
+  unchanged spec → zero LLM calls and only the final confirm, delta-only questioning
+  with batch confirm, triage re-ask with reason, batch decline fall-through,
+  keep-previous trigger, no-source re-review, triage retry-once.
 - `cli.test.ts` — `captureMain` + `mkdtemp` temp dirs for all three commands, exit codes,
-  help/version/unknown-command.
+  help/version/unknown-command, `generate --update` (in-place, zero-call unchanged path).
 
 ## 12. Extension points
 
