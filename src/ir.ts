@@ -42,6 +42,12 @@ export interface MetaBehaviorIr {
   trigger: Trigger;
   checks: PredicateCheck[];
   semanticChecks: SemanticCheck[];
+  /**
+   * Normalized spec section body this meta was last generated or reviewed
+   * against. Written by generate; `generate --update` compares it against the
+   * current spec to skip re-interviewing unchanged sections.
+   */
+  source?: string;
 }
 
 export interface JudgeIr {
@@ -205,6 +211,9 @@ function parseMetaBehavior(value: unknown, path: string): MetaBehaviorIr {
       parseSemanticCheck(check, `${path}.semanticChecks[${index}]`),
     ),
   };
+  if (value.source !== undefined) {
+    parsed.source = requireString(value.source, `${path}.source`);
+  }
   if (parsed.checks.length === 0 && parsed.semanticChecks.length === 0) {
     fail(path, "must define at least one check or semantic check.");
   }

@@ -23,16 +23,51 @@ export interface ActionVocabulary {
   sampleEvent: TrajectoryEvent;
 }
 
-export function extractMetaBehaviorNames(behaviorBody: string): string[] {
+export interface SpecSection {
+  /** H2 heading text — the meta-behavior name. */
+  heading: string;
+  /** Normalized section body: the text between this heading and the next H2. */
+  body: string;
+}
+
+/**
+ * Normalize a spec section body so equality comparison (and the `source`
+ * field recorded in the IR) is stable across trailing whitespace and blank
+ * line runs.
+ */
+export function normalizeSectionBody(text: string): string {
+  const lines = text.split(/\r?\n/).map((line) => line.trimEnd());
+  const collapsed: string[] = [];
+  for (const line of lines) {
+    if (line === "" && (collapsed.length === 0 || collapsed.at(-1) === "")) continue;
+    collapsed.push(line);
+  }
+  while (collapsed.at(-1) === "") collapsed.pop();
+  return collapsed.join("\n");
+}
+
+/** Split a spec body into its H2 sections; text before the first H2 is preamble, not a section. */
+export function splitSpecSections(behaviorBody: string): SpecSection[] {
   const matches = [...behaviorBody.matchAll(/^##[ \t]+(.+?)[ \t]*$/gm)];
-  const names = matches.map((match) => match[1]!.trim());
-  const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+  const headings = matches.map((match) => match[1]!.trim());
+  const duplicates = headings.filter((name, index) => headings.indexOf(name) !== index);
   if (duplicates.length > 0) {
     throw new Error(
       `Behavior contains duplicate H2 headings: ${[...new Set(duplicates)].join(", ")}.`,
     );
   }
-  return names;
+  return matches.map((match, index) => {
+    const start = (match.index ?? 0) + match[0].length;
+    const end = index + 1 < matches.length ? (matches[index + 1]!.index ?? 0) : behaviorBody.length;
+    return {
+      heading: headings[index]!,
+      body: normalizeSectionBody(behaviorBody.slice(start, end)),
+    };
+  });
+}
+
+export function extractMetaBehaviorNames(behaviorBody: string): string[] {
+  return splitSpecSections(behaviorBody).map((section) => section.heading);
 }
 
 export function extractVocabulary(trajectories: AgentTrajectory[]): ActionVocabulary[] {
@@ -53,7 +88,7 @@ export function extractVocabulary(trajectories: AgentTrajectory[]): ActionVocabu
   return [...byAction.values()].sort((a, b) => a.action.localeCompare(b.action));
 }
 
-const PROPOSAL_SYSTEM_PROMPT = `You compile an Agent Behavior spec into a judge intermediate representation (IR).
+export const PROPOSAL_SYSTEM_PROMPT = `You compile an Agent Behavior spec into a judge intermediate representation (IR).
 
 The IR decomposes the spec into meta-behaviors (one per H2 section). Each meta-behavior has:
 - "trigger": when the meta-behavior applies. Either {"description", "match"} (an event matcher, or array of matchers meaning any-of) or {"description", "semantic": true} when no event pattern can detect it.
@@ -117,7 +152,7 @@ export function parseProposal(response: string, behaviorName: string): JudgeIr {
   return normalizeProposal(parseIr(stringifyYaml(draft)));
 }
 
-function capitalizeFirst(text: string): string {
+export function capitalizeFirst(text: string): string {
   return text.length === 0 ? text : text.charAt(0).toUpperCase() + text.slice(1);
 }
 
@@ -226,7 +261,7 @@ function clipContent(content: string, max = 80): string {
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
-function writeEvidence(
+export function writeEvidence(
   deps: InterviewDeps,
   trajectories: AgentTrajectory[],
   pattern: EventPattern,
@@ -253,18 +288,22 @@ function writeEvidence(
   if (content.length > 0) deps.write(`${EVIDENCE_INDENT}content: ${JSON.stringify(content)}`);
 }
 
-function renderPattern(pattern: EventPattern): string {
+export function renderPattern(pattern: EventPattern): string {
   return JSON.stringify(pattern);
 }
 
-function writeUnobservedWarning(deps: InterviewDeps, problems: string[]): void {
+export function writeUnobservedWarning(deps: InterviewDeps, problems: string[]): void {
   if (problems.length === 0) return;
   deps.write(
     `  warning: references ${problems.join(", ")} not observed in any sample trajectory — accept only if your agent's instrumentation emits it`,
   );
 }
 
-async function askChoice(deps: InterviewDeps, prompt: string, choices: string[]): Promise<string> {
+export async function askChoice(
+  deps: InterviewDeps,
+  prompt: string,
+  choices: string[],
+): Promise<string> {
   for (;;) {
     const answer = (await deps.ask(`${prompt} `)).trim().toLowerCase();
     if (answer === "" && choices.length > 0) return choices[0]!;
@@ -299,14 +338,12 @@ async function interviewNames(
   return kept;
 }
 
-async function interviewTrigger(
-  meta: MetaBehaviorIr,
+export async function interviewTrigger(
+  trigger: Trigger,
   trajectories: AgentTrajectory[],
   sets: VocabularySets,
   deps: InterviewDeps,
 ): Promise<Trigger> {
-  const trigger = meta.trigger;
-  deps.write(`\n## ${meta.name}`);
   deps.write(`Trigger: ${trigger.description}`);
   if ("match" in trigger) {
     deps.write(`  match: ${renderPattern(trigger.match)}`);
@@ -336,15 +373,15 @@ async function interviewTrigger(
   return trigger;
 }
 
-async function interviewChecks(
-  meta: MetaBehaviorIr,
+export async function interviewChecks(
+  proposedChecks: PredicateCheck[],
   trajectories: AgentTrajectory[],
   sets: VocabularySets,
   deps: InterviewDeps,
 ): Promise<{ checks: PredicateCheck[]; demoted: SemanticCheck[] }> {
   const checks: PredicateCheck[] = [];
   const demoted: SemanticCheck[] = [];
-  for (const check of meta.checks) {
+  for (const check of proposedChecks) {
     deps.write(`Check (${check.type}): "${check.quote}"`);
     if (check.type === "ordering") {
       deps.write(`  first: ${renderPattern(check.first)}`);
@@ -386,7 +423,7 @@ async function interviewChecks(
   return { checks, demoted };
 }
 
-async function interviewSemanticChecks(
+export async function interviewSemanticChecks(
   semanticChecks: SemanticCheck[],
   deps: InterviewDeps,
 ): Promise<SemanticCheck[]> {
@@ -424,7 +461,8 @@ export async function runInterview(
     );
   }
 
-  const metaBehaviorNames = extractMetaBehaviorNames(input.behaviorBody);
+  const sections = splitSpecSections(input.behaviorBody);
+  const metaBehaviorNames = sections.map((section) => section.heading);
   const vocabulary = extractVocabulary(input.trajectories);
   deps.write(
     `Observed vocabulary: ${vocabulary.length} action(s) across ${input.trajectories.length} trajectory(ies).`,
@@ -445,10 +483,12 @@ export async function runInterview(
   const sets = vocabularySets(vocabulary);
   const namedMetaBehaviors = await interviewNames(proposal, metaBehaviorNames.length > 0, deps);
 
+  const sectionByName = new Map(sections.map((section) => [section.heading, section.body]));
   const metaBehaviors: MetaBehaviorIr[] = [];
   for (const meta of namedMetaBehaviors) {
-    const trigger = await interviewTrigger(meta, input.trajectories, sets, deps);
-    const { checks, demoted } = await interviewChecks(meta, input.trajectories, sets, deps);
+    deps.write(`\n## ${meta.name}`);
+    const trigger = await interviewTrigger(meta.trigger, input.trajectories, sets, deps);
+    const { checks, demoted } = await interviewChecks(meta.checks, input.trajectories, sets, deps);
     const semanticChecks = await interviewSemanticChecks(
       [...meta.semanticChecks, ...demoted],
       deps,
@@ -457,7 +497,10 @@ export async function runInterview(
       deps.write(`note: "${meta.name}" has no checks left; dropping it.`);
       continue;
     }
-    metaBehaviors.push({ name: meta.name, trigger, checks, semanticChecks });
+    const kept: MetaBehaviorIr = { name: meta.name, trigger, checks, semanticChecks };
+    const source = sectionByName.get(meta.name);
+    if (source !== undefined && source.length > 0) kept.source = source;
+    metaBehaviors.push(kept);
   }
 
   if (metaBehaviors.length === 0) {

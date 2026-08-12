@@ -4,6 +4,7 @@ import {
   extractMetaBehaviorNames,
   extractVocabulary,
   runInterview,
+  splitSpecSections,
   unobservedInCheck,
   unobservedInTrigger,
   vocabularySets,
@@ -123,6 +124,32 @@ describe("extractMetaBehaviorNames", () => {
   });
 });
 
+describe("splitSpecSections", () => {
+  it("splits H2 sections with normalized bodies, excluding the preamble", () => {
+    expect(splitSpecSections(behaviorBody)).toEqual([
+      {
+        heading: "Read the tax research skill before beginning source research",
+        body: "When beginning source research to answer a tax question, the agent first reads the tax research skill, before searching or opening a source.",
+      },
+      {
+        heading: "Consult primary sources before answering",
+        body: "Before deciding on the answer, it reads the relevant primary source and bases its conclusion on that source.",
+      },
+    ]);
+  });
+
+  it("normalizes trailing whitespace and blank line runs", () => {
+    const messy = "## Meta A  \n\n\n\nFirst paragraph.   \n\n\nSecond paragraph.\t\n\n\n";
+    expect(splitSpecSections(messy)).toEqual([
+      { heading: "Meta A", body: "First paragraph.\n\nSecond paragraph." },
+    ]);
+  });
+
+  it("returns no sections for a spec without H2 headings", () => {
+    expect(splitSpecSections("# Title\n\nJust prose.\n")).toEqual([]);
+  });
+});
+
 describe("unobserved vocabulary flagging", () => {
   const sets = vocabularySets(extractVocabulary(trajectories));
 
@@ -218,6 +245,15 @@ describe("runInterview", () => {
     ]);
     expect(ir!.metaBehaviors[0]!.checks).toHaveLength(1);
     expect(ir!.metaBehaviors[1]!.semanticChecks).toHaveLength(1);
+
+    // Each meta records the section body it was reviewed against, so
+    // `generate --update` can later detect unchanged sections.
+    expect(ir!.metaBehaviors[0]!.source).toBe(
+      "When beginning source research to answer a tax question, the agent first reads the tax research skill, before searching or opening a source.",
+    );
+    expect(ir!.metaBehaviors[1]!.source).toBe(
+      "Before deciding on the answer, it reads the relevant primary source and bases its conclusion on that source.",
+    );
   });
 
   it("shows matcher-referenced metadata and clipped content as evidence", async () => {
@@ -472,5 +508,7 @@ describe("runInterview", () => {
       "Read the tax research skill before beginning source research",
       "Renamed meta",
     ]);
+    // Without H2 sections there is no section text to record.
+    expect(ir!.metaBehaviors.every((meta) => meta.source === undefined)).toBe(true);
   });
 });
