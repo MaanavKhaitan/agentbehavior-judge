@@ -8,6 +8,7 @@ import { main, type CliDeps } from "./cli.js";
 import { parseIr } from "./ir.js";
 import type { TrajectoryJudgment } from "./judge.js";
 import { taxCase } from "./taxFixtures.js";
+import { driveInterview, type InterviewSnapshot } from "./webInterviewTestClient.js";
 
 let temporaryDirectories: string[] = [];
 
@@ -257,19 +258,39 @@ describe("behavior-judge calibrate", () => {
   });
 });
 
-describe("behavior-judge generate", () => {
-  it("runs the interview and writes the confirmed IR", async () => {
-    const projectDirectory = await makeTempDir();
-    const behaviorDirectory = path.join(
-      projectDirectory,
-      ".agents",
-      "behaviors",
-      "primary-source-tax-research",
-    );
-    await mkdir(behaviorDirectory, { recursive: true });
-    await writeFile(
-      path.join(behaviorDirectory, "BEHAVIOR.md"),
-      `---
+const generateProposal = JSON.stringify({
+  metaBehaviors: [
+    {
+      name: "Read the tax research skill before beginning source research",
+      trigger: {
+        description: "The agent begins source research.",
+        match: [{ action: "web_search" }, { action: "open_url" }],
+      },
+      checks: [
+        {
+          type: "ordering",
+          quote: "reads the tax research skill, before searching",
+          first: { action: "read_skill" },
+          before: [{ action: "web_search" }, { action: "open_url" }],
+        },
+      ],
+      semanticChecks: [],
+    },
+  ],
+});
+
+async function writeGenerateFixture(): Promise<string> {
+  const projectDirectory = await makeTempDir();
+  const behaviorDirectory = path.join(
+    projectDirectory,
+    ".agents",
+    "behaviors",
+    "primary-source-tax-research",
+  );
+  await mkdir(behaviorDirectory, { recursive: true });
+  await writeFile(
+    path.join(behaviorDirectory, "BEHAVIOR.md"),
+    `---
 name: primary-source-tax-research
 description: Tax research conduct.
 ---
@@ -280,36 +301,21 @@ description: Tax research conduct.
 
 The agent first reads the tax research skill, before searching or opening a source.
 `,
-      { flush: true },
-    );
-    await writeFile(
-      path.join(behaviorDirectory, "trajectory.json"),
-      JSON.stringify(taxCase("secondary-then-primary").trajectory),
-      { flush: true },
-    );
+    { flush: true },
+  );
+  await writeFile(
+    path.join(behaviorDirectory, "trajectory.json"),
+    JSON.stringify(taxCase("secondary-then-primary").trajectory),
+    { flush: true },
+  );
+  return behaviorDirectory;
+}
 
-    const proposal = JSON.stringify({
-      metaBehaviors: [
-        {
-          name: "Read the tax research skill before beginning source research",
-          trigger: {
-            description: "The agent begins source research.",
-            match: [{ action: "web_search" }, { action: "open_url" }],
-          },
-          checks: [
-            {
-              type: "ordering",
-              quote: "reads the tax research skill, before searching",
-              first: { action: "read_skill" },
-              before: [{ action: "web_search" }, { action: "open_url" }],
-            },
-          ],
-          semanticChecks: [],
-        },
-      ],
-    });
+describe("behavior-judge generate", () => {
+  it("runs the interview and writes the confirmed IR", async () => {
+    const behaviorDirectory = await writeGenerateFixture();
     const deps: CliDeps = {
-      complete: () => Promise.resolve(proposal),
+      complete: () => Promise.resolve(generateProposal),
       ask: () => Promise.resolve("y"),
     };
 
@@ -324,6 +330,62 @@ The agent first reads the tax research skill, before searching or opening a sour
     const ir = parseIr(written);
     expect(ir.behavior).toBe("primary-source-tax-research");
     expect(ir.metaBehaviors).toHaveLength(1);
+  });
+
+  it("serves the interview on a local browser server with --web", async () => {
+    const behaviorDirectory = await writeGenerateFixture();
+
+    // The browser stand-in answers as soon as the CLI "opens" the URL:
+    // trigger accept, check accept, confirm save.
+    let browserRun: Promise<InterviewSnapshot> | undefined;
+    const deps: CliDeps = {
+      complete: () => Promise.resolve(generateProposal),
+      openBrowser: (url) => {
+        browserRun = driveInterview(url, [
+          { kind: "accept" },
+          { kind: "accept" },
+          { kind: "save" },
+        ]);
+      },
+    };
+
+    const { exitCode, stdout } = await captureMain(
+      ["generate", behaviorDirectory, path.join(behaviorDirectory, "trajectory.json"), "--web"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Interview running at http://127.0.0.1:");
+    expect(stdout).toContain("Wrote ");
+    expect((await browserRun!).state.type).toBe("done");
+    const written = await readFile(path.join(behaviorDirectory, "judge.yaml"), "utf8");
+    expect(parseIr(written).metaBehaviors).toHaveLength(1);
+  });
+
+  it("exits 1 without writing when the browser interview is cancelled", async () => {
+    const behaviorDirectory = await writeGenerateFixture();
+
+    let browserRun: Promise<InterviewSnapshot> | undefined;
+    const deps: CliDeps = {
+      complete: () => Promise.resolve(generateProposal),
+      openBrowser: (url) => {
+        browserRun = driveInterview(url, [
+          { kind: "accept" },
+          { kind: "accept" },
+          { kind: "cancel" },
+        ]);
+      },
+    };
+
+    const { exitCode, stdout } = await captureMain(
+      ["generate", behaviorDirectory, path.join(behaviorDirectory, "trajectory.json"), "--web"],
+      deps,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain("Aborted; nothing written.");
+    expect((await browserRun!).state).toMatchObject({ type: "done", written: null });
+    await expect(readFile(path.join(behaviorDirectory, "judge.yaml"), "utf8")).rejects.toThrow();
   });
 
   it("errors without a sample trajectory", async () => {

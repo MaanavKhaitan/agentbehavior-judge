@@ -41,13 +41,14 @@ gateway client derive from that repo's examples.
 ## 3. CLI surface
 
 ```
-behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>] [--model <m>]
+behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>] [--model <m>] [--web]
 behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 ```
 
 Exit codes: `judge` 0 on successful run; `calibrate` 1 on any expected/actual
 disagreement (CI gate); `generate` 1 if the user declines the final confirm. Errors → 1.
+`generate --web` serves the interview to a browser instead of readline (see §10a).
 
 ## 4. Source map (`src/`, dependency order)
 
@@ -72,14 +73,29 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
   `resolveCompletion` (offline detection), result types, `compareToExpected`.
 - `generate.ts` — H2 extraction, `extractVocabulary`, proposal prompt + `parseProposal`,
   unobserved-vocabulary flagging (`vocabularySets`/`unobservedInTrigger`/
-  `unobservedInCheck`), `runInterview` (seams: `complete`/`ask`/`write`).
+  `unobservedInCheck`), and the presenter-based interview: `prepareInterview` (one
+  proposal LLM call) + `runProposalInterview` (deterministic driver: walks the proposal,
+  asks an `InterviewPresenter` one structured step at a time and owns all demote/drop/
+  edit/capitalization rules) + `createTextPresenter` (the readline rendering) +
+  `runInterview` (seams: `complete`/`ask`/`write`; = prepare → drive with the text
+  presenter). New interview frontends implement `InterviewPresenter`, never fork the
+  driver.
 - `env.ts` — nearest-`.env` discovery (`loadNearestDotEnv`/`applyNearestDotEnv`): the CLI
   fills `process.env` from the closest `.env` at or above cwd; already-set variables win.
   CLI-only concern, not exported from `index.ts`; `cli.test.ts`'s `captureMain` stubs the
   `CliDeps.loadEnv` seam so the repo's real `.env` never leaks into tests.
-- `cli.ts` — dispatch, report formatting, readline wiring, `CliDeps` injection.
-- `index.ts` — public exports. `taxFixtures.ts` — test-only copy of the six tax cases
-  (not packed/exported).
+- `webInterview.ts` — the `--web` presenter: 127.0.0.1-only `node:http` server, one-time
+  token on every route, SSE state pushes + JSON answer posts, back-navigation by
+  answer-replay (§10a). CLI-only concern, not exported from `index.ts`.
+- `webInterviewPage.ts` — the single-file browser page served by `webInterview.ts`
+  (inline CSS/JS in one template literal; the embedded script avoids backticks and
+  `${` so the literal needs no escaping; all dynamic text rendered via DOM APIs, never
+  innerHTML).
+- `cli.ts` — dispatch, report formatting, readline wiring, browser opener, `CliDeps`
+  injection.
+- `index.ts` — public exports. `taxFixtures.ts`, `webInterviewTestClient.ts` — test-only
+  helpers (tax cases as TS data; SSE/answer client standing in for the browser page).
+  Neither is packed/exported.
 
 ## 5. Event schema (tool convention, NOT part of the standard)
 
@@ -220,7 +236,38 @@ gateway entirely — how all tests run.
 6. Print YAML, final `[y/n]`, CLI writes to `--out` (default `judge.yaml` next to
    `BEHAVIOR.md`).
 
-## 11. Fixtures and tests
+Steps 5–6 are one deterministic driver (`runProposalInterview`) speaking to an
+`InterviewPresenter`; the readline flow above is `createTextPresenter`, whose output is
+the CLI contract `generate.test.ts` scripts against.
+
+## 10a. `generate --web` (browser presenter over the same driver)
+
+- `runWebInterview` (webInterview.ts): binds `node:http` to 127.0.0.1 on a random port,
+  prints the URL (containing a 128-bit one-time token — required on every route,
+  compared with `timingSafeEqual`), opens the browser (`CliDeps.openBrowser` seam;
+  platform `open`/`xdg-open`/`start` default), then runs prepare → drive exactly like
+  the text path. `writeIr` runs before the success screen is shown, so the page never
+  claims a file exists that wasn't written.
+- Protocol: `GET /` page; `GET /events` SSE pushing `{revision, behavior, state}`
+  snapshots (state: `loading` → `step` (stepId + `canGoBack` + sanitized payload;
+  evidence content clipped to 200 chars) → `done`/`error`); `POST /answer`
+  `{stepId, answer}` (409 stale/mismatched step, 400 malformed answer — validated
+  per step kind server-side); `POST /back`.
+- **Back-navigation = answer replay.** The driver is deterministic given
+  (proposal, answers), so the session records every answer; back pops the last one,
+  rejects the pending step with a `RestartSignal`, and re-runs the driver from the
+  cached proposal — recorded answers replay instantly, the model is never re-asked,
+  and terminal notes are suppressed during replay (only logged at the live frontier).
+- The page (webInterviewPage.ts) is one sequential card per step: matchers rendered as
+  natural-language chips (humanized action names, actor/metadata/contentIncludes as
+  sub-lines, any-of as "or"), ordering/pairing as first→before / each→followedBy flow
+  diagrams, `after:` as an "only applies after" strip, sample events in a dark
+  code-aesthetic evidence panel (no trajectory/event-id provenance — that stays a CLI
+  concern), unobserved-vocabulary warnings as amber callouts, edit-in-place for
+  descriptions/questions/names, and a replay-backed back button. It holds no interview
+  logic — it renders whatever step the server pushes.
+- Aborting: cancel on the confirm card → done screen, `Aborted; nothing written.`,
+  exit 1 (same as declining `[y/n]`). Ctrl-C in the terminal kills the server outright.
 
 Three example dirs under `examples/`, each holding `BEHAVIOR.md`, a checked-in
 `judge.yaml`, and labeled `{trajectory, expected}` JSONs under `trajectories/` —
@@ -282,8 +329,15 @@ Test suite (zero network, `queuedCompletion` fake returning scripted JSON):
 - `env.test.ts` — nearest-`.env` discovery, parsing, and already-set-variables-win.
 - `generate.test.ts` — vocabulary extraction, unobserved-vocabulary flagging, scripted
   interviews (answer sequences are order-sensitive; count prompts carefully when editing).
+  Scripts the text presenter through `runInterview`, so it also pins the readline
+  rendering of the presenter refactor.
+- `webInterview.test.ts` — real loopback HTTP against `runWebInterview` via
+  `webInterviewTestClient.ts`: step payload shapes, accept-all to written file,
+  back/replay (asserts exactly one proposal completion), cancel-writes-nothing, token
+  403s, stale/malformed answer 409/400s, server teardown on proposal failure.
 - `cli.test.ts` — `captureMain` + `mkdtemp` temp dirs for all three commands, exit codes,
-  help/version/unknown-command.
+  help/version/unknown-command; `--web` end-to-end through the `openBrowser` seam
+  (browser stand-in drives the interview over HTTP while `main` blocks).
 
 ## 12. Extension points
 

@@ -16,7 +16,7 @@ hand-building judging machinery. `behavior-judge` closes that gap:
 - **`calibrate`** measures judge agreement against trajectories with known verdicts.
 
 ```
-behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>] [--model <m>]
+behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>] [--model <m>] [--web]
 behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 ```
@@ -225,6 +225,14 @@ warning instead of silent trust (common for forbidden or rare behaviors that cle
 never show); accepting it is your assertion that the instrumentation emits that event —
 if it doesn't, demote the clause to a semantic check or drop it. The confirmed YAML is
 written next to your `BEHAVIOR.md` (or to `--out`).
+
+With `--web` the same interview runs in your browser instead of the terminal: the CLI
+starts a local-only server (bound to 127.0.0.1, guarded by a one-time token in the URL),
+opens the page, and walks you through one card per trigger/check with the matchers
+rendered in plain language, sample events shown as evidence, and a back button for
+revisiting earlier answers. The terminal process still does everything real — the LLM
+call, the vocabulary flagging, writing `judge.yaml` — so nothing about the output
+changes; close the tab or Ctrl-C the terminal to abort.
 
 Hand-writing `judge.yaml` is equally supported; `generate` is a convenience, not a
 requirement.

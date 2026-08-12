@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { promises as fs, realpathSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -7,6 +8,7 @@ import { parseArgs as parseNodeArgs } from "node:util";
 
 import { applyNearestDotEnv } from "./env.js";
 import { runInterview } from "./generate.js";
+import { runWebInterview } from "./webInterview.js";
 import { completeWithBraintrustGateway, type JudgeCompletion } from "./gateway.js";
 import {
   compareToExpected,
@@ -27,6 +29,8 @@ export interface CliDeps {
    * workspace `.env` never leaks into `process.env`.
    */
   loadEnv?: () => Promise<void>;
+  /** Replaces the platform browser opener for `generate --web`; tests use it to reach the URL. */
+  openBrowser?: (url: string) => void;
 }
 
 interface ParsedArgs {
@@ -38,6 +42,7 @@ interface ParsedArgs {
   out: string | undefined;
   model: string | undefined;
   noVerify: boolean;
+  web: boolean;
 }
 
 function parseCliArgs(argv: string[]): ParsedArgs {
@@ -51,6 +56,7 @@ function parseCliArgs(argv: string[]): ParsedArgs {
       out: { type: "string" },
       model: { type: "string" },
       "no-verify": { type: "boolean" },
+      web: { type: "boolean" },
     },
   });
 
@@ -63,6 +69,7 @@ function parseCliArgs(argv: string[]): ParsedArgs {
     out: values.out,
     model: values.model,
     noVerify: values["no-verify"] ?? false,
+    web: values.web ?? false,
   };
 }
 
@@ -70,14 +77,17 @@ function usage(): string {
   return `behavior-judge compiles Agent Behavior specs into judge IRs and runs them over trajectories.
 
 Usage:
-  behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>] [--model <m>]
+  behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>] [--model <m>] [--web]
   behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
   behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 
 generate interviews you through compiling a BEHAVIOR.md into a judge.yaml IR,
 binding deterministic checks to the event vocabulary observed in the sample
-trajectories. judge runs an IR over trajectory JSON files. calibrate compares
-judge verdicts against expected verdicts recorded in the trajectory files.
+trajectories. With --web the same interview runs in your browser on a
+local-only server (127.0.0.1, one-time token); the terminal prints the URL
+and still writes the file. judge runs an IR over trajectory JSON files.
+calibrate compares judge verdicts against expected verdicts recorded in the
+trajectory files.
 
 Trajectory JSON files contain a trajectory ({id, complete, events}), a
 {trajectory, expected} wrapper, or an array of either.
@@ -278,6 +288,32 @@ async function runGenerateCommand(args: ParsedArgs, deps: CliDeps): Promise<numb
         messages,
         args.model === undefined ? {} : { model: args.model },
       ));
+  const outPath = args.out ?? path.join(path.dirname(record.location), "judge.yaml");
+
+  if (args.web) {
+    const ir = await runWebInterview({
+      input: {
+        behaviorName: record.name,
+        behaviorBody: record.body,
+        trajectories: cases.map((trajectoryCase) => trajectoryCase.trajectory),
+      },
+      complete,
+      outPath,
+      writeIr: async (generated) => {
+        await fs.writeFile(outPath, serializeIr(generated), "utf8");
+        return outPath;
+      },
+      log: (line) => process.stdout.write(`${line}\n`),
+      openBrowser: deps.openBrowser ?? openBrowserCommand,
+    });
+
+    if (ir === undefined) {
+      process.stdout.write("Aborted; nothing written.\n");
+      return 1;
+    }
+    process.stdout.write(`${generateSuccessBox(outPath)}\n`);
+    return 0;
+  }
 
   let readline: ReturnType<typeof createInterface> | undefined;
   const ask =
@@ -310,12 +346,45 @@ async function runGenerateCommand(args: ParsedArgs, deps: CliDeps): Promise<numb
       return 1;
     }
 
-    const outPath = args.out ?? path.join(path.dirname(record.location), "judge.yaml");
     await fs.writeFile(outPath, serializeIr(ir), "utf8");
-    process.stdout.write(`Wrote ${outPath}\n`);
+    process.stdout.write(`${generateSuccessBox(outPath)}\n`);
     return 0;
   } finally {
     readline?.close();
+  }
+}
+
+/** Celebration box for a written judge; keeps a "Wrote <path>" line inside. */
+function generateSuccessBox(outPath: string): string {
+  const lines = [`✅ Your judge is ready!`, `Wrote ${outPath}`];
+  // The check-mark emoji renders two columns wide in terminals.
+  const displayWidth = (text: string) =>
+    [...text].reduce((sum, char) => sum + (char === "✅" ? 2 : 1), 0);
+  const innerWidth = Math.max(...lines.map(displayWidth));
+  const body = lines.map((line) => `│  ${line}${" ".repeat(innerWidth - displayWidth(line))}  │`);
+  return [`╭${"─".repeat(innerWidth + 4)}╮`, ...body, `╰${"─".repeat(innerWidth + 4)}╯`].join("\n");
+}
+
+/** Best-effort platform browser opener; the printed URL is the fallback. */
+function openBrowserCommand(url: string): void {
+  let command: string;
+  let commandArgs: string[];
+  if (process.platform === "darwin") {
+    command = "open";
+    commandArgs = [url];
+  } else if (process.platform === "win32") {
+    command = "cmd";
+    commandArgs = ["/c", "start", "", url];
+  } else {
+    command = "xdg-open";
+    commandArgs = [url];
+  }
+  try {
+    const child = spawn(command, commandArgs, { stdio: "ignore", detached: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // Ignore: the URL was already printed.
   }
 }
 
