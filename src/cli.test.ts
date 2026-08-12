@@ -279,6 +279,36 @@ const generateProposal = JSON.stringify({
   ],
 });
 
+/** An unchanged-spec update fixture: BEHAVIOR.md, judge.yaml with `source`, trajectory. */
+async function writeUpdateFixture(): Promise<string> {
+  const directory = await makeTempDir();
+  await writeFile(
+    path.join(directory, "BEHAVIOR.md"),
+    `---
+name: primary-source-tax-research
+description: Tax research conduct.
+---
+
+# Primary-source tax research
+
+## Read the tax research skill before beginning source research
+
+The agent first reads the tax research skill, before searching or opening a source.
+`,
+    { flush: true },
+  );
+  const irWithSource = `${predicateOnlyIr}    semanticChecks: []
+    source: The agent first reads the tax research skill, before searching or opening a source.
+`;
+  await writeFile(path.join(directory, "judge.yaml"), irWithSource, { flush: true });
+  await writeFile(
+    path.join(directory, "trajectory.json"),
+    JSON.stringify(taxCase("secondary-then-primary").trajectory),
+    { flush: true },
+  );
+  return directory;
+}
+
 async function writeGenerateFixture(): Promise<string> {
   const projectDirectory = await makeTempDir();
   const behaviorDirectory = path.join(
@@ -333,31 +363,7 @@ describe("behavior-judge generate", () => {
   });
 
   it("updates an existing IR in place with --update, without LLM calls when nothing changed", async () => {
-    const directory = await makeTempDir();
-    await writeFile(
-      path.join(directory, "BEHAVIOR.md"),
-      `---
-name: primary-source-tax-research
-description: Tax research conduct.
----
-
-# Primary-source tax research
-
-## Read the tax research skill before beginning source research
-
-The agent first reads the tax research skill, before searching or opening a source.
-`,
-      { flush: true },
-    );
-    const irWithSource = `${predicateOnlyIr}    semanticChecks: []
-    source: The agent first reads the tax research skill, before searching or opening a source.
-`;
-    await writeFile(path.join(directory, "judge.yaml"), irWithSource, { flush: true });
-    await writeFile(
-      path.join(directory, "trajectory.json"),
-      JSON.stringify(taxCase("secondary-then-primary").trajectory),
-      { flush: true },
-    );
+    const directory = await writeUpdateFixture();
     const deps: CliDeps = {
       complete: () => Promise.reject(new Error("unexpected LLM call")),
       ask: () => Promise.resolve("y"),
@@ -440,20 +446,39 @@ The agent first reads the tax research skill, before searching or opening a sour
     await expect(readFile(path.join(behaviorDirectory, "judge.yaml"), "utf8")).rejects.toThrow();
   });
 
-  it("rejects --web combined with --update", async () => {
-    const behaviorDirectory = await writeGenerateFixture();
+  it("runs the update interview in the browser with --web --update", async () => {
+    const directory = await writeUpdateFixture();
 
-    const { exitCode, stderr } = await captureMain([
-      "generate",
-      behaviorDirectory,
-      path.join(behaviorDirectory, "trajectory.json"),
-      "--web",
-      "--update",
-      path.join(behaviorDirectory, "judge.yaml"),
-    ]);
+    // Unchanged spec: the browser sees only the confirm card; zero LLM calls.
+    let browserRun: Promise<InterviewSnapshot> | undefined;
+    const deps: CliDeps = {
+      complete: () => Promise.reject(new Error("unexpected LLM call")),
+      openBrowser: (url) => {
+        browserRun = driveInterview(url, [{ kind: "save" }]);
+      },
+    };
 
-    expect(exitCode).toBe(1);
-    expect(stderr).toContain("--web does not support --update");
+    const { exitCode, stdout } = await captureMain(
+      [
+        "generate",
+        directory,
+        path.join(directory, "trajectory.json"),
+        "--web",
+        "--update",
+        path.join(directory, "judge.yaml"),
+      ],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Interview running at http://127.0.0.1:");
+    expect(stdout).toContain("unchanged; carried over");
+    expect(stdout).toContain(`Wrote ${path.join(directory, "judge.yaml")}`);
+    expect((await browserRun!).state.type).toBe("done");
+    const written = parseIr(await readFile(path.join(directory, "judge.yaml"), "utf8"));
+    expect(written.metaBehaviors[0]!.source).toBe(
+      "The agent first reads the tax research skill, before searching or opening a source.",
+    );
   });
 
   it("errors when the --update IR file cannot be read", async () => {

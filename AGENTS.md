@@ -50,8 +50,8 @@ Exit codes: `judge` 0 on successful run; `calibrate` 1 on any expected/actual
 disagreement (CI gate); `generate` 1 if the user declines the final confirm. Errors → 1.
 `generate --update <ir.yaml>` is the diff-scoped re-interview after a spec edit (§10);
 `--out` then defaults to the `--update` path. `generate --web` serves the interview to
-a browser instead of readline (§10a); it does not combine with `--update` yet (the CLI
-rejects the pair).
+a browser instead of readline (§10a); it combines with `--update` (the update interview
+adds two step kinds the page renders, §10a).
 
 ## 4. Source map (`src/`, dependency order)
 
@@ -82,25 +82,32 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
   step at a time, owns all demote/drop/edit/capitalization rules, and records each kept
   meta's section body as `source`) + `createTextPresenter` (the readline rendering) +
   `runInterview` (seams: `complete`/`ask`/`write`; = prepare → drive with the text
-  presenter). Also exports deps-based per-item helpers (`interviewTrigger`/
-  `interviewChecks`/`interviewSemanticChecks`) that wrap the same review logic in a
-  one-off text presenter — `update.ts` reuses them. New interview frontends implement
+  presenter). Also exports the presenter-based per-item review helpers
+  (`reviewTrigger`/`reviewChecks`/`reviewSemanticChecks`) that `update.ts`'s driver
+  reuses for delta and re-ask questions; an optional `reAskReason` on those steps is
+  how triage flags surface in either frontend. New interview frontends implement
   `InterviewPresenter`, never fork the driver.
 - `update.ts` — diff-scoped regeneration behind `generate --update`: `planUpdate` maps
   existing metas onto the edited spec's sections via the recorded `source` bodies
   (unchanged/changed/added + removed), `computeSectionDelta` splits a changed
-  section's clauses into carried/dropped/new by verbatim quote survival, one scoped
-  proposal call covers all changed+added sections, one demote-only triage call per
-  changed section flags carried clauses the edit may have re-scoped, and
-  `runUpdateInterview` asks only about the deltas. Readline-only for now (`--web`
-  rejects `--update`).
+  section's clauses into carried/dropped/new by verbatim quote survival. Mirrors
+  generate's prepare/drive split: `prepareUpdate` makes every LLM call up-front (one
+  scoped proposal covering all changed+added sections, one demote-only triage call per
+  changed section flagging carried clauses the edit may have re-scoped) and
+  `runUpdateProposalInterview` (deterministic driver) asks only about the deltas
+  through an `UpdatePresenter` — `InterviewPresenter` plus two update-only steps
+  (`askChangedTrigger` `[y/p/s/e]`, `askCarriedBatch` keep-all/review) and update note
+  rendering. `createTextUpdatePresenter` is the readline frontend;
+  `runUpdateInterview` = prepare → drive with it. `--web --update` drives the same
+  driver from the browser (§10a).
 - `env.ts` — nearest-`.env` discovery (`loadNearestDotEnv`/`applyNearestDotEnv`): the CLI
   fills `process.env` from the closest `.env` at or above cwd; already-set variables win.
   CLI-only concern, not exported from `index.ts`; `cli.test.ts`'s `captureMain` stubs the
   `CliDeps.loadEnv` seam so the repo's real `.env` never leaks into tests.
-- `webInterview.ts` — the `--web` presenter: 127.0.0.1-only `node:http` server, one-time
-  token on every route, SSE state pushes + JSON answer posts, back-navigation by
-  answer-replay (§10a). CLI-only concern, not exported from `index.ts`.
+- `webInterview.ts` — the `--web` presenter for both the generate and update
+  interviews: 127.0.0.1-only `node:http` server, one-time token on every route, SSE
+  state pushes + JSON answer posts, back-navigation by answer-replay (§10a). CLI-only
+  concern, not exported from `index.ts`.
 - `webInterviewPage.ts` — the single-file browser page served by `webInterview.ts`
   (inline CSS/JS in one template literal; the embedded script avoids backticks and
   `${` so the literal needs no escaping; all dynamic text rendered via DOM APIs, never
@@ -259,8 +266,9 @@ gateway entirely — how all tests run.
 ### `generate --update <existing.yaml>` (diff-scoped re-interview, `update.ts`)
 
 After a spec edit, re-interviews only what changed instead of re-running the full flow.
-All change detection is deterministic and code-side; the two LLM calls it can make are
-scoped and validated, and neither can shrink the review:
+All change detection is deterministic and code-side; the LLM calls it can make (one
+shared proposal, one triage per changed section — all made in `prepareUpdate`, before
+the first question) are scoped and validated, and none can shrink the review:
 
 - **Plan** (`planUpdate`): per current-spec section — body equals the meta's recorded
   `source` → carried verbatim, zero questions, zero LLM; new heading → proposed and
@@ -294,11 +302,14 @@ scoped and validated, and neither can shrink the review:
 
 Steps 5–6 are one deterministic driver (`runProposalInterview`) speaking to an
 `InterviewPresenter`; the readline flow above is `createTextPresenter`, whose output is
-the CLI contract `generate.test.ts` scripts against.
+the CLI contract `generate.test.ts` scripts against. The update flow has the same
+shape: `runUpdateProposalInterview` speaking to an `UpdatePresenter`, with
+`createTextUpdatePresenter` as the readline frontend `update.test.ts` scripts against.
 
-## 10a. `generate --web` (browser presenter over the same driver)
+## 10a. `generate --web` (browser presenter over the same drivers)
 
-- `runWebInterview` (webInterview.ts): binds `node:http` to 127.0.0.1 on a random port,
+- `runWebInterview` / `runWebUpdateInterview` (webInterview.ts): binds `node:http` to
+  127.0.0.1 on a random port,
   prints the URL (containing a 128-bit one-time token — required on every route,
   compared with `timingSafeEqual`), opens the browser (`CliDeps.openBrowser` seam;
   platform `open`/`xdg-open`/`start` default), then runs prepare → drive exactly like
@@ -309,11 +320,12 @@ the CLI contract `generate.test.ts` scripts against.
   evidence content clipped to 200 chars) → `done`/`error`); `POST /answer`
   `{stepId, answer}` (409 stale/mismatched step, 400 malformed answer — validated
   per step kind server-side); `POST /back`.
-- **Back-navigation = answer replay.** The driver is deterministic given
-  (proposal, answers), so the session records every answer; back pops the last one,
-  rejects the pending step with a `RestartSignal`, and re-runs the driver from the
-  cached proposal — recorded answers replay instantly, the model is never re-asked,
-  and terminal notes are suppressed during replay (only logged at the live frontier).
+- **Back-navigation = answer replay.** The drivers are deterministic given
+  (prepared LLM results, answers), so the session records every answer; back pops the
+  last one, rejects the pending step with a `RestartSignal`, and re-runs the driver
+  from the cached prepare output — recorded answers replay instantly, the model is
+  never re-asked, and terminal notes are suppressed during replay (only logged at the
+  live frontier).
 - The page (webInterviewPage.ts) is one sequential card per step: matchers rendered as
   natural-language chips (humanized action names, actor/metadata/contentIncludes as
   sub-lines, any-of as "or"), ordering/pairing as first→before / each→followedBy flow
@@ -322,6 +334,15 @@ the CLI contract `generate.test.ts` scripts against.
   concern), unobserved-vocabulary warnings as amber callouts, edit-in-place for
   descriptions/questions/names, and a replay-backed back button. It holds no interview
   logic — it renders whatever step the server pushes.
+- Update mode (`--web --update`) adds two card kinds: `changedTrigger` (previous vs
+  proposed trigger side by side, with a keep-previous button) and `carriedBatch` (the
+  unflagged carried clauses as a list, keep-all vs review-individually). Triage-flagged
+  clauses re-appear as ordinary trigger/check/semantic cards with an amber
+  `reAskReason` callout. Unchanged sections produce no cards — they surface only in
+  terminal notes and the final confirm summary, whose rows carry
+  updated/new/unchanged status pills (plus a removed-rules line); a fully-unchanged
+  update renders an explicit "already up to date" state instead of the generic
+  review copy.
 - Aborting: cancel on the confirm card → done screen, `Aborted; nothing written.`,
   exit 1 (same as declining `[y/n]`). Ctrl-C in the terminal kills the server outright.
 
@@ -397,14 +418,18 @@ Test suite (zero network, `queuedCompletion` fake returning scripted JSON):
   unchanged spec → zero LLM calls and only the final confirm, delta-only questioning
   with batch confirm, triage re-ask with reason, batch decline fall-through,
   keep-previous trigger, no-source re-review, triage retry-once.
-- `webInterview.test.ts` — real loopback HTTP against `runWebInterview` via
-  `webInterviewTestClient.ts`: step payload shapes, accept-all to written file,
-  back/replay (asserts exactly one proposal completion), cancel-writes-nothing, token
-  403s, stale/malformed answer 409/400s, server teardown on proposal failure.
+- `webInterview.test.ts` — real loopback HTTP against `runWebInterview` and
+  `runWebUpdateInterview` via `webInterviewTestClient.ts`: step payload shapes
+  (including `carriedBatch`, `changedTrigger`, and `reAskReason`), accept-all to
+  written file, back/replay (asserts exactly one proposal completion; for update also
+  exactly one triage), batch-decline fall-through, unchanged-spec confirm-only path,
+  cancel-writes-nothing, token 403s, stale/malformed answer 409/400s, server teardown
+  on proposal failure.
 - `cli.test.ts` — `captureMain` + `mkdtemp` temp dirs for all three commands, exit codes,
   help/version/unknown-command, `generate --update` (in-place, zero-call unchanged path),
   `--web` end-to-end through the `openBrowser` seam (browser stand-in drives the
-  interview over HTTP while `main` blocks), and the `--web`/`--update` rejection.
+  interview over HTTP while `main` blocks), and `--web --update` end-to-end (zero-call
+  unchanged path through the browser).
 
 ## 12. Extension points
 

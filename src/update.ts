@@ -3,21 +3,28 @@ import { stringify as stringifyYaml } from "yaml";
 import {
   askChoice,
   capitalizeFirst,
+  createTextPresenter,
   extractVocabulary,
-  interviewChecks,
-  interviewSemanticChecks,
-  interviewTrigger,
   parseProposal,
+  patternEvidence,
   PROPOSAL_SYSTEM_PROMPT,
+  renderNote,
   renderPattern,
+  reviewChecks,
+  reviewSemanticChecks,
+  reviewTrigger,
   splitSpecSections,
   unobservedInTrigger,
   vocabularySets,
-  writeEvidence,
+  writeEvidenceLines,
   writeUnobservedWarning,
   type ActionVocabulary,
   type InterviewDeps,
+  type InterviewNote,
+  type InterviewPresenter,
+  type PatternEvidence,
   type SpecSection,
+  type StepPosition,
   type VocabularySets,
 } from "./generate.js";
 import {
@@ -26,6 +33,7 @@ import {
   parseJsonObject,
   requireNonEmptyString,
   type GatewayMessage,
+  type JudgeCompletion,
 } from "./gateway.js";
 import {
   serializeIr,
@@ -245,7 +253,7 @@ const TRIAGE_SYSTEM_PROMPT = `A section of an Agent Behavior spec was edited aft
 
 Return JSON only:
 {"items": [{"id": "<id>", "verdict": "unaffected" | "re_ask", "reason": "<one sentence>"}]}
-Include every listed id exactly once. Use "re_ask" whenever you are unsure.`;
+Include every listed id exactly once. Use "re_ask" whenever you are unsure. Write each reason as a plain declarative sentence stating what the edit changed and what the clause now needs (e.g. "the edit redefines what counts as a primary source, so this matcher needs updating"); never hedge with "may", "might", or "could" — the re_ask verdict itself already conveys that a human decides.`;
 
 export interface TriageItem {
   id: string;
@@ -312,7 +320,13 @@ export function parseTriageResult(response: string, ids: string[]): Map<string, 
 }
 
 // ---------------------------------------------------------------------------
-// Update interview.
+// Structured update steps and answers. Like generate.ts, the update interview
+// splits into prepareUpdate (every LLM call: the shared proposal plus one
+// triage per changed section) and runUpdateProposalInterview (a deterministic
+// driver speaking to an UpdatePresenter) — which is what lets the --web UI
+// replay recorded answers for back-navigation without re-asking the model.
+// The two update-only interactions get their own step kinds; everything else
+// reuses the generate steps (with `reAskReason` set on triage-flagged ones).
 // ---------------------------------------------------------------------------
 
 export interface UpdateInput {
@@ -322,10 +336,78 @@ export interface UpdateInput {
   trajectories: AgentTrajectory[];
 }
 
-type CarriedItem =
-  | { id: "trigger"; kind: "trigger"; trigger: Trigger }
-  | { id: string; kind: "check"; check: PredicateCheck }
-  | { id: string; kind: "semantic"; check: SemanticCheck };
+/** A clause carried over because its quoted sentence survived the spec edit. */
+export type CarriedClause =
+  | { kind: "trigger"; trigger: Trigger }
+  | { kind: "check"; check: PredicateCheck }
+  | { kind: "semantic"; check: SemanticCheck };
+
+/** A carried clause plus the stable id triage verdicts key on. */
+export type CarriedItem = CarriedClause & { id: string };
+
+export interface ChangedTriggerStep {
+  kind: "changedTrigger";
+  metaName: string;
+  previous: Trigger;
+  proposed: Trigger;
+  /** Present only when the proposed trigger is a predicate. */
+  evidence?: PatternEvidence;
+  unobserved: string[];
+  position: StepPosition;
+}
+
+export type ChangedTriggerAnswer =
+  | { kind: "accept" }
+  | { kind: "keepPrevious" }
+  | { kind: "forceSemantic" }
+  | { kind: "edit"; description: string };
+
+export interface CarriedBatchStep {
+  kind: "carriedBatch";
+  metaName: string;
+  /** Carried clauses triage left unflagged, in trigger/checks/semantics order. */
+  items: CarriedClause[];
+  position: StepPosition;
+}
+
+export type CarriedBatchAnswer = { kind: "keep" } | { kind: "review" };
+
+export type UpdateNote =
+  | InterviewNote
+  | { kind: "planSummary"; unchanged: number; changed: number; added: number; removed: number }
+  | { kind: "metaRemoved"; name: string }
+  | { kind: "requestingUpdateProposal" }
+  | { kind: "sectionHeader"; name: string; status: "unchanged" | "changed" | "added" }
+  | { kind: "clauseDropped"; label: string; quote: string };
+
+export interface UpdatePresenter extends InterviewPresenter {
+  note: (note: UpdateNote) => void;
+  askChangedTrigger: (step: ChangedTriggerStep) => Promise<ChangedTriggerAnswer>;
+  askCarriedBatch: (step: CarriedBatchStep) => Promise<CarriedBatchAnswer>;
+}
+
+const SECTION_STATUS_LABEL = {
+  unchanged: "unchanged; carried over.",
+  changed: "section changed.",
+  added: "new section.",
+} as const;
+
+export function renderUpdateNote(note: UpdateNote): string {
+  switch (note.kind) {
+    case "planSummary":
+      return `Spec sections: ${note.unchanged} unchanged, ${note.changed} changed, ${note.added} added; ${note.removed} meta-behavior(s) removed.`;
+    case "metaRemoved":
+      return `note: "${note.name}" removed — its section no longer appears in the spec.`;
+    case "requestingUpdateProposal":
+      return "Requesting revised meta-behaviors from the model; this can take a minute or two...";
+    case "sectionHeader":
+      return `\n## ${note.name} — ${SECTION_STATUS_LABEL[note.status]}`;
+    case "clauseDropped":
+      return `note: dropped ${note.label} "${note.quote}" — its quoted sentence no longer appears in the section.`;
+    default:
+      return renderNote(note);
+  }
+}
 
 function triggerLine(trigger: Trigger): string {
   return "match" in trigger
@@ -333,10 +415,10 @@ function triggerLine(trigger: Trigger): string {
     : `${trigger.description} (semantic)`;
 }
 
-function carriedLabel(item: CarriedItem): string {
-  if (item.kind === "trigger") return `trigger: ${triggerLine(item.trigger)}`;
-  if (item.kind === "check") return `${item.check.type}: "${item.check.quote}"`;
-  return `semantic: "${item.check.quote}"`;
+function carriedClauseLabel(clause: CarriedClause): string {
+  if (clause.kind === "trigger") return `trigger: ${triggerLine(clause.trigger)}`;
+  if (clause.kind === "check") return `${clause.check.type}: "${clause.check.quote}"`;
+  return `semantic: "${clause.check.quote}"`;
 }
 
 function carriedItemDescription(item: CarriedItem): string {
@@ -345,50 +427,44 @@ function carriedItemDescription(item: CarriedItem): string {
   return `semantic check ${JSON.stringify(item.check)}`;
 }
 
-async function interviewChangedTrigger(
-  previous: Trigger,
-  proposed: Trigger,
-  trajectories: AgentTrajectory[],
-  sets: VocabularySets,
-  deps: InterviewDeps,
-): Promise<Trigger> {
-  deps.write("Trigger changed.");
-  deps.write(`  previous: ${triggerLine(previous)}`);
-  deps.write(`  proposed: ${triggerLine(proposed)}`);
-  if ("match" in proposed) {
-    writeEvidence(deps, trajectories, proposed.match);
-    writeUnobservedWarning(deps, unobservedInTrigger(proposed, sets));
-  } else {
-    deps.write("  (semantic trigger: judged by one scoped LLM call)");
-  }
-  const answer = await askChoice(
-    deps,
-    "[y] accept proposed / [p] keep previous / [s] force semantic / [e] edit proposed description",
-    ["y", "p", "s", "e"],
-  );
-  if (answer === "p") return previous;
-  if (answer === "s") return { description: proposed.description, semantic: true };
-  if (answer === "e") {
-    const description = (await deps.ask("New trigger description: ", proposed.description)).trim();
-    if (description.length === 0) return proposed;
-    return "match" in proposed
-      ? { ...proposed, description: capitalizeFirst(description) }
-      : { description, semantic: true };
-  }
-  return proposed;
+function carriedClause(item: CarriedItem): CarriedClause {
+  if (item.kind === "trigger") return { kind: "trigger", trigger: item.trigger };
+  if (item.kind === "check") return { kind: "check", check: item.check };
+  return { kind: "semantic", check: item.check };
+}
+
+export interface PreparedChangedSection {
+  delta: SectionDelta;
+  /** Carried clauses in trigger/checks/semantics order; ids key the triage map. */
+  items: CarriedItem[];
+  triage: Map<string, TriageVerdict>;
+}
+
+export interface PreparedUpdate {
+  behaviorName: string;
+  trajectories: AgentTrajectory[];
+  sets: VocabularySets;
+  plan: UpdatePlan;
+  /** Proposed meta-behaviors for changed and added sections, by heading. */
+  proposals: Map<string, MetaBehaviorIr>;
+  /** Delta, carried items, and triage verdicts per changed-section heading. */
+  changed: Map<string, PreparedChangedSection>;
 }
 
 /**
- * Run the diff-scoped update interview against an existing IR. Unchanged
- * sections carry over with zero questions and zero LLM calls; changed and
- * added sections get one shared scoped proposal call, and each changed
- * section with carried clauses gets one triage call. Returns the confirmed
- * IR, or undefined when the user declines to write it.
+ * Validate the input, plan the update, and make every LLM call the interview
+ * needs: one shared proposal covering all changed+added sections, then one
+ * demote-only triage call per changed section with carried clauses (a meta
+ * without a recorded `source` gets every carried clause re-asked instead — the
+ * safe ceiling — with no LLM call). Separated from the interview loop so the
+ * web UI can re-run the (deterministic) interview for back-navigation without
+ * re-asking the model.
  */
-export async function runUpdateInterview(
+export async function prepareUpdate(
   input: UpdateInput,
-  deps: InterviewDeps,
-): Promise<JudgeIr | undefined> {
+  complete: JudgeCompletion,
+  note?: (note: UpdateNote) => void,
+): Promise<PreparedUpdate> {
   if (input.trajectories.length === 0) {
     throw new Error(
       "update needs at least one sample trajectory JSON to bind predicates to your event vocabulary.",
@@ -404,11 +480,15 @@ export async function runUpdateInterview(
   const plan = planUpdate(input.existing, sections);
   const count = (kind: UpdateEntry["kind"]) =>
     plan.entries.filter((entry) => entry.kind === kind).length;
-  deps.write(
-    `Spec sections: ${count("unchanged")} unchanged, ${count("changed")} changed, ${count("added")} added; ${plan.removed.length} meta-behavior(s) removed.`,
-  );
+  note?.({
+    kind: "planSummary",
+    unchanged: count("unchanged"),
+    changed: count("changed"),
+    added: count("added"),
+    removed: plan.removed.length,
+  });
   for (const meta of plan.removed) {
-    deps.write(`note: "${meta.name}" removed — its section no longer appears in the spec.`);
+    note?.({ kind: "metaRemoved", name: meta.name });
   }
 
   const vocabulary = extractVocabulary(input.trajectories);
@@ -421,11 +501,9 @@ export async function runUpdateInterview(
   });
   let proposals = new Map<string, MetaBehaviorIr>();
   if (targets.length > 0) {
-    deps.write(
-      "Requesting revised meta-behaviors from the model; this can take a minute or two...",
-    );
+    note?.({ kind: "requestingUpdateProposal" });
     proposals = await completeJsonWithRetry(
-      deps.complete,
+      complete,
       buildUpdateProposalMessages({
         behaviorName: input.behaviorName,
         behaviorBody: input.behaviorBody,
@@ -436,51 +514,10 @@ export async function runUpdateInterview(
     );
   }
 
-  const metaBehaviors: MetaBehaviorIr[] = [];
-  const pushMeta = (
-    name: string,
-    trigger: Trigger,
-    checks: PredicateCheck[],
-    semanticChecks: SemanticCheck[],
-    sourceBody: string,
-  ) => {
-    if (checks.length === 0 && semanticChecks.length === 0) {
-      deps.write(`note: "${name}" has no checks left; dropping it.`);
-      return;
-    }
-    const meta: MetaBehaviorIr = { name, trigger, checks, semanticChecks };
-    if (sourceBody.length > 0) meta.source = sourceBody;
-    metaBehaviors.push(meta);
-  };
-
+  const changed = new Map<string, PreparedChangedSection>();
   for (const entry of plan.entries) {
-    if (entry.kind === "unchanged") {
-      deps.write(`\n## ${entry.meta.name} — unchanged; carried over.`);
-      metaBehaviors.push(entry.meta);
-      continue;
-    }
-    if (entry.kind === "added") {
-      const proposed = proposals.get(entry.section.heading)!;
-      deps.write(`\n## ${entry.section.heading} — new section.`);
-      const trigger = await interviewTrigger(proposed.trigger, input.trajectories, sets, deps);
-      const { checks, demoted } = await interviewChecks(
-        proposed.checks,
-        input.trajectories,
-        sets,
-        deps,
-      );
-      const semanticChecks = await interviewSemanticChecks(
-        [...proposed.semanticChecks, ...demoted],
-        deps,
-      );
-      pushMeta(entry.section.heading, trigger, checks, semanticChecks, entry.section.body);
-      continue;
-    }
-
-    // Changed section: mechanical delta, then demote-only triage over the
-    // carried clauses, then interview only what needs a human decision.
+    if (entry.kind !== "changed") continue;
     const proposed = proposals.get(entry.section.heading)!;
-    deps.write(`\n## ${entry.meta.name} — section changed.`);
     const delta = computeSectionDelta(entry.meta, proposed, entry.section.body);
 
     const items: CarriedItem[] = [];
@@ -508,7 +545,7 @@ export async function runUpdateInterview(
         }
       } else {
         const verdicts = await completeJsonWithRetry(
-          deps.complete,
+          complete,
           buildTriageMessages({
             metaName: entry.meta.name,
             previousSection: entry.meta.source,
@@ -527,30 +564,148 @@ export async function runUpdateInterview(
         for (const [id, verdict] of verdicts) triage.set(id, verdict);
       }
     }
+    changed.set(entry.section.heading, { delta, items, triage });
+  }
+
+  return {
+    behaviorName: input.behaviorName,
+    trajectories: input.trajectories,
+    sets,
+    plan,
+    proposals,
+    changed,
+  };
+}
+
+async function reviewChangedTrigger(
+  previous: Trigger,
+  proposed: Trigger,
+  prepared: Pick<PreparedUpdate, "trajectories" | "sets">,
+  presenter: UpdatePresenter,
+  metaName: string,
+  position: StepPosition,
+): Promise<Trigger> {
+  const step: ChangedTriggerStep = {
+    kind: "changedTrigger",
+    metaName,
+    previous,
+    proposed,
+    unobserved: unobservedInTrigger(proposed, prepared.sets),
+    position,
+    ...("match" in proposed
+      ? { evidence: patternEvidence(prepared.trajectories, "match", proposed.match) }
+      : {}),
+  };
+  const answer = await presenter.askChangedTrigger(step);
+  if (answer.kind === "keepPrevious") return previous;
+  if (answer.kind === "forceSemantic") return { description: proposed.description, semantic: true };
+  if (answer.kind === "edit") {
+    const description = answer.description.trim();
+    if (description.length === 0) return proposed;
+    return "match" in proposed
+      ? { ...proposed, description: capitalizeFirst(description) }
+      : { description, semantic: true };
+  }
+  return proposed;
+}
+
+/**
+ * Walk a prepared update through the presenter. Unchanged sections carry over
+ * with zero questions; added sections review like plain generate; changed
+ * sections ask only about the delta plus triage-flagged carried clauses.
+ * Deterministic given (prepared, answers): no LLM calls, no IO.
+ */
+export async function runUpdateProposalInterview(
+  prepared: PreparedUpdate,
+  presenter: UpdatePresenter,
+): Promise<JudgeIr | undefined> {
+  const { plan, proposals, trajectories, sets } = prepared;
+
+  const metaBehaviors: MetaBehaviorIr[] = [];
+  const pushMeta = (
+    name: string,
+    trigger: Trigger,
+    checks: PredicateCheck[],
+    semanticChecks: SemanticCheck[],
+    sourceBody: string,
+  ) => {
+    if (checks.length === 0 && semanticChecks.length === 0) {
+      presenter.note({ kind: "metaDropped", name });
+      return;
+    }
+    const meta: MetaBehaviorIr = { name, trigger, checks, semanticChecks };
+    if (sourceBody.length > 0) meta.source = sourceBody;
+    metaBehaviors.push(meta);
+  };
+
+  for (const [metaIndex, entry] of plan.entries.entries()) {
+    const position: StepPosition = { metaIndex, metaCount: plan.entries.length };
+    if (entry.kind === "unchanged") {
+      presenter.note({ kind: "sectionHeader", name: entry.meta.name, status: "unchanged" });
+      metaBehaviors.push(entry.meta);
+      continue;
+    }
+    if (entry.kind === "added") {
+      const proposed = proposals.get(entry.section.heading)!;
+      presenter.note({ kind: "sectionHeader", name: entry.section.heading, status: "added" });
+      const trigger = await reviewTrigger(
+        proposed.trigger,
+        trajectories,
+        sets,
+        presenter,
+        entry.section.heading,
+        position,
+      );
+      const { checks, demoted } = await reviewChecks(
+        proposed.checks,
+        trajectories,
+        sets,
+        presenter,
+        entry.section.heading,
+        position,
+      );
+      const semanticChecks = await reviewSemanticChecks(
+        [
+          ...proposed.semanticChecks.map((check) => ({ check, demoted: false })),
+          ...demoted.map((check) => ({ check, demoted: true })),
+        ],
+        presenter,
+        entry.section.heading,
+        position,
+      );
+      pushMeta(entry.section.heading, trigger, checks, semanticChecks, entry.section.body);
+      continue;
+    }
+
+    // Changed section: interview only what needs a human decision — the
+    // trigger if it changed, triage-flagged carried clauses individually,
+    // the unflagged rest as one batch confirm, and the new clauses.
+    const proposed = proposals.get(entry.section.heading)!;
+    presenter.note({ kind: "sectionHeader", name: entry.meta.name, status: "changed" });
+    const { delta, items, triage } = prepared.changed.get(entry.section.heading)!;
 
     let trigger: Trigger = entry.meta.trigger;
     if (!delta.triggerCarried) {
-      trigger = await interviewChangedTrigger(
+      trigger = await reviewChangedTrigger(
         entry.meta.trigger,
         proposed.trigger,
-        input.trajectories,
-        sets,
-        deps,
+        prepared,
+        presenter,
+        entry.meta.name,
+        position,
       );
     }
 
     let batch = items.filter((item) => triage.get(item.id)?.reAsk !== true);
     let reAsk = items.filter((item) => triage.get(item.id)?.reAsk === true);
     if (batch.length > 0) {
-      deps.write(`Carrying over ${batch.length} clause(s) whose spec sentences are unchanged:`);
-      for (const item of batch) {
-        deps.write(`  ${carriedLabel(item)}`);
-      }
-      const answer = await askChoice(deps, "Keep these? [y] yes / [n] review individually", [
-        "y",
-        "n",
-      ]);
-      if (answer === "n") {
+      const answer = await presenter.askCarriedBatch({
+        kind: "carriedBatch",
+        metaName: entry.meta.name,
+        items: batch.map((item) => carriedClause(item)),
+        position,
+      });
+      if (answer.kind === "review") {
         reAsk = items;
         batch = [];
       }
@@ -567,51 +722,72 @@ export async function runUpdateInterview(
       const verdict = triage.get(item.id);
       // Items here via a declined batch confirm carry an "unaffected" triage
       // verdict; only flagged items get the re-ask banner.
-      if (verdict?.reAsk === true) {
-        deps.write(`Re-asking — the edit may affect this clause: ${verdict.reason}`);
-      }
+      const reAskReason = verdict?.reAsk === true ? verdict.reason : undefined;
       if (item.kind === "trigger") {
-        trigger = await interviewTrigger(item.trigger, input.trajectories, sets, deps);
-      } else if (item.kind === "check") {
-        const { checks, demoted } = await interviewChecks(
-          [item.check],
-          input.trajectories,
+        trigger = await reviewTrigger(
+          item.trigger,
+          trajectories,
           sets,
-          deps,
+          presenter,
+          entry.meta.name,
+          position,
+          reAskReason,
+        );
+      } else if (item.kind === "check") {
+        const { checks, demoted } = await reviewChecks(
+          [item.check],
+          trajectories,
+          sets,
+          presenter,
+          entry.meta.name,
+          position,
+          reAskReason,
         );
         keptChecks.push(...checks);
         demotedFromCarried.push(...demoted);
       } else {
-        keptSemantics.push(...(await interviewSemanticChecks([item.check], deps)));
+        keptSemantics.push(
+          ...(await reviewSemanticChecks(
+            [{ check: item.check, demoted: false }],
+            presenter,
+            entry.meta.name,
+            position,
+            reAskReason,
+          )),
+        );
       }
     }
 
     for (const check of delta.droppedChecks) {
-      deps.write(
-        `note: dropped ${check.type} check "${check.quote}" — its quoted sentence no longer appears in the section.`,
-      );
+      presenter.note({ kind: "clauseDropped", label: `${check.type} check`, quote: check.quote });
     }
     for (const check of delta.droppedSemanticChecks) {
-      deps.write(
-        `note: dropped semantic check "${check.quote}" — its quoted sentence no longer appears in the section.`,
-      );
+      presenter.note({ kind: "clauseDropped", label: "semantic check", quote: check.quote });
     }
 
     let newKeptChecks: PredicateCheck[] = [];
     let demotedFromNew: SemanticCheck[] = [];
     if (delta.newChecks.length > 0) {
-      const { checks, demoted } = await interviewChecks(
+      const { checks, demoted } = await reviewChecks(
         delta.newChecks,
-        input.trajectories,
+        trajectories,
         sets,
-        deps,
+        presenter,
+        entry.meta.name,
+        position,
       );
       newKeptChecks = checks;
       demotedFromNew = demoted;
     }
-    const newSemantics = [...delta.newSemanticChecks, ...demotedFromCarried, ...demotedFromNew];
+    const newSemantics = [
+      ...delta.newSemanticChecks.map((check) => ({ check, demoted: false })),
+      ...demotedFromCarried.map((check) => ({ check, demoted: true })),
+      ...demotedFromNew.map((check) => ({ check, demoted: true })),
+    ];
     const keptNewSemantics =
-      newSemantics.length > 0 ? await interviewSemanticChecks(newSemantics, deps) : [];
+      newSemantics.length > 0
+        ? await reviewSemanticChecks(newSemantics, presenter, entry.meta.name, position)
+        : [];
 
     pushMeta(
       entry.section.heading,
@@ -626,10 +802,120 @@ export async function runUpdateInterview(
     throw new Error("No meta-behaviors left after the interview; nothing to write.");
   }
 
-  const ir: JudgeIr = { version: 1, behavior: input.behaviorName, metaBehaviors };
-  const rendered = serializeIr(ir);
-  deps.write("\nUpdated judge IR:\n");
-  deps.write(rendered);
-  const confirm = await askChoice(deps, "Write this IR? [y] yes / [n] no", ["y", "n"]);
-  return confirm === "y" ? ir : undefined;
+  const statuses: Record<string, "unchanged" | "changed" | "added"> = {};
+  for (const entry of plan.entries) statuses[entry.section.heading] = entry.kind;
+  const ir: JudgeIr = { version: 1, behavior: prepared.behaviorName, metaBehaviors };
+  const confirmed = await presenter.confirm({
+    kind: "confirm",
+    ir,
+    yaml: serializeIr(ir),
+    update: { statuses, removed: plan.removed.map((meta) => meta.name) },
+  });
+  return confirmed ? ir : undefined;
+}
+
+/**
+ * The readline presentation of the update interview: the generate presenter
+ * plus the two update-only steps, re-ask banners on triage-flagged clauses,
+ * and update note rendering. Output is the CLI contract update.test.ts
+ * scripts against.
+ */
+export function createTextUpdatePresenter(
+  deps: Pick<InterviewDeps, "ask" | "write">,
+): UpdatePresenter {
+  const base = createTextPresenter(deps);
+  const reAskBanner = (reAskReason: string | undefined) => {
+    if (reAskReason !== undefined) {
+      deps.write(`Re-asking — this clause needs re-review: ${reAskReason}`);
+    }
+  };
+  return {
+    ...base,
+
+    note: (note) => {
+      deps.write(renderUpdateNote(note));
+    },
+
+    askTrigger: (step) => {
+      reAskBanner(step.reAskReason);
+      return base.askTrigger(step);
+    },
+
+    askCheck: (step) => {
+      reAskBanner(step.reAskReason);
+      return base.askCheck(step);
+    },
+
+    askSemanticCheck: (step) => {
+      reAskBanner(step.reAskReason);
+      return base.askSemanticCheck(step);
+    },
+
+    askChangedTrigger: async (step) => {
+      deps.write("Trigger changed.");
+      deps.write(`  previous: ${triggerLine(step.previous)}`);
+      deps.write(`  proposed: ${triggerLine(step.proposed)}`);
+      if ("match" in step.proposed) {
+        if (step.evidence !== undefined) writeEvidenceLines(deps, step.evidence);
+        writeUnobservedWarning(deps, step.unobserved);
+      } else {
+        deps.write("  (semantic trigger: judged by one scoped LLM call)");
+      }
+      const answer = await askChoice(
+        deps,
+        "[y] accept proposed / [p] keep previous / [s] force semantic / [e] edit proposed description",
+        ["y", "p", "s", "e"],
+      );
+      if (answer === "p") return { kind: "keepPrevious" };
+      if (answer === "s") return { kind: "forceSemantic" };
+      if (answer === "e") {
+        return {
+          kind: "edit",
+          description: (
+            await deps.ask("New trigger description: ", step.proposed.description)
+          ).trim(),
+        };
+      }
+      return { kind: "accept" };
+    },
+
+    askCarriedBatch: async (step) => {
+      deps.write(
+        `Carrying over ${step.items.length} clause(s) whose spec sentences are unchanged:`,
+      );
+      for (const item of step.items) {
+        deps.write(`  ${carriedClauseLabel(item)}`);
+      }
+      const answer = await askChoice(deps, "Keep these? [y] yes / [n] review individually", [
+        "y",
+        "n",
+      ]);
+      return answer === "n" ? { kind: "review" } : { kind: "keep" };
+    },
+
+    confirm: async (step) => {
+      deps.write("\nUpdated judge IR:\n");
+      deps.write(step.yaml);
+      const answer = await askChoice(deps, "Write this IR? [y] yes / [n] no", ["y", "n"]);
+      return answer === "y";
+    },
+  };
+}
+
+/**
+ * Run the diff-scoped update interview against an existing IR. Unchanged
+ * sections carry over with zero questions and zero LLM calls; changed and
+ * added sections get one shared scoped proposal call, and each changed
+ * section with carried clauses gets one triage call. Returns the confirmed
+ * IR, or undefined when the user declines to write it.
+ */
+export async function runUpdateInterview(
+  input: UpdateInput,
+  deps: InterviewDeps,
+): Promise<JudgeIr | undefined> {
+  const presenter = createTextUpdatePresenter(deps);
+  const prepared = await prepareUpdate(input, deps.complete, (note) => {
+    presenter.note(note);
+  });
+  return runUpdateProposalInterview(prepared, presenter);
 }
