@@ -2,7 +2,7 @@
 
 An SRE deploy agent doing staged rollouts, judged entirely by deterministic predicates:
 all four meta-behaviors use predicate triggers and predicate checks, zero semantic
-checks. The whole example judges offline with **zero LLM calls** (`src/examples.test.ts`
+checks. The whole example judges offline with **zero LLM calls** (`src/core/examples.test.ts`
 proves it in CI); with an API key set, the only LLM involvement is one verify-on-false
 call per flagged violation.
 
@@ -88,7 +88,7 @@ Measured 2026-08-11 with the default model (`gpt-5-mini`) for both judges: 10 re
 runs each over all 9 labeled cases (36 meta verdicts per run), aggregated by
 `scripts/agreement-stats.mjs`. Our judge ran live with verify-on-false enabled — the
 verifier confirmed every flagged violation and overturned none, so these verdicts are
-identical to the zero-LLM offline result that `src/examples.test.ts` locks in CI.
+identical to the zero-LLM offline result that `src/core/examples.test.ts` locks in CI.
 
 | Metric (10 runs × 36 meta verdicts)  | `behavior-judge` (this repo) | Upstream one-call judge  |
 | ------------------------------------ | ---------------------------- | ------------------------ |

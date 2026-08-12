@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { splitSpecSections, type InterviewDeps } from "./generate.js";
-import type { JudgeIr, MetaBehaviorIr } from "./ir.js";
-import { taxCase } from "./taxFixtures.js";
+import type { JudgeIr, MetaBehaviorIr } from "../core/ir.js";
+import { taxCase } from "../core/taxFixtures.js";
 import {
   buildTriageMessages,
   buildUpdateProposalMessages,

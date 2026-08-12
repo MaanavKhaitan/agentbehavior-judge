@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { splitSpecSections } from "./generate.js";
+import { splitSpecSections } from "../interview/generate.js";
 import { parseIr, serializeIr } from "./ir.js";
 import { compareToExpected, judgeTrajectory } from "./judge.js";
 import { loadBehaviorSpec } from "./spec.js";
@@ -26,7 +26,7 @@ describe("example IR source fields", () => {
   // their BEHAVIOR.md files.
   for (const example of ALL_EXAMPLES) {
     it(`examples/${example}: every meta's source matches its spec section`, async () => {
-      const exampleUrl = new URL(`../examples/${example}/`, import.meta.url);
+      const exampleUrl = new URL(`../../examples/${example}/`, import.meta.url);
       const spec = await loadBehaviorSpec(fileURLToPath(exampleUrl));
       const sections = new Map(
         splitSpecSections(spec.body).map((section) => [section.heading, section.body]),
@@ -41,7 +41,7 @@ describe("example IR source fields", () => {
 
 for (const example of PREDICATE_ONLY_EXAMPLES) {
   describe(`examples/${example}`, () => {
-    const exampleUrl = new URL(`../examples/${example}/`, import.meta.url);
+    const exampleUrl = new URL(`../../examples/${example}/`, import.meta.url);
 
     async function loadIr() {
       return parseIr(await readFile(new URL("judge.yaml", exampleUrl), "utf8"));

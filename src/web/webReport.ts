@@ -1,7 +1,7 @@
-import type { JudgeIr, MetaBehaviorIr } from "./ir.js";
-import type { ClauseResult, MetaBehaviorResult, TrajectoryJudgment } from "./judge.js";
-import { clip } from "./text.js";
-import type { AgentTrajectory, TrajectoryCase, TrajectoryEvent } from "./trajectory.js";
+import type { JudgeIr, MetaBehaviorIr } from "../core/ir.js";
+import type { ClauseResult, MetaBehaviorResult, TrajectoryJudgment } from "../core/judge.js";
+import { clip } from "../core/text.js";
+import type { AgentTrajectory, TrajectoryCase, TrajectoryEvent } from "../core/trajectory.js";
 import { REPORT_PAGE_HTML } from "./webReportPage.js";
 import { SnapshotSession, startWebServer } from "./webServer.js";
 

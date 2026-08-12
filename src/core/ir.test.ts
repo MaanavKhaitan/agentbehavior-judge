@@ -5,7 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { behaviorVerdictToScore, foldBehaviorVerdicts, parseIr, serializeIr } from "./ir.js";
 
 const referenceIrUrl = new URL(
-  "../examples/primary-source-tax-research/judge.yaml",
+  "../../examples/primary-source-tax-research/judge.yaml",
   import.meta.url,
 );
 

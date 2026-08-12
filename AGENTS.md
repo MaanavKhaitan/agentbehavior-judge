@@ -57,6 +57,14 @@ support `--web` yet.
 
 ## 4. Source map (`src/`, dependency order)
 
+Layout: the judging engine lives in `src/core/`, the spec→IR authoring flows in
+`src/interview/`, and the two `--web` frontends in `src/web/`; the entry points
+(`index.ts`, `cli.ts`) and the CLI-only `env.ts` stay at the `src/` root. Tests are
+colocated with their sources. Dependencies flow one way — web → interview → core —
+and the root entry points import all three.
+
+**`src/core/` — the judging engine:**
+
 - `trajectory.ts` — `TrajectoryEvent`/`AgentTrajectory`/`ExpectedBehaviorJudgment`/
   `TrajectoryCase` + `loadTrajectoryFile` (accepts bare trajectory, `{trajectory,
 expected}` wrapper, or array of either; rejects duplicate event IDs).
@@ -78,6 +86,9 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
   `buildVerifyFalseMessages`.
 - `judge.ts` — orchestrator `judgeTrajectory` (all judging policy lives here),
   `resolveCompletion` (offline detection), result types, `compareToExpected`.
+
+**`src/interview/` — spec→IR authoring:**
+
 - `generate.ts` — H2 extraction (`splitSpecSections`/`normalizeSectionBody`),
   `extractVocabulary`, proposal prompt + `parseProposal`, unobserved-vocabulary flagging
   (`vocabularySets`/`unobservedInTrigger`/`unobservedInCheck`), and the presenter-based
@@ -104,18 +115,16 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
   rendering. `createTextUpdatePresenter` is the readline frontend;
   `runUpdateInterview` = prepare → drive with it. `--web --update` drives the same
   driver from the browser (§10a).
-- `env.ts` — nearest-`.env` discovery (`loadNearestDotEnv`/`applyNearestDotEnv`): the CLI
-  fills `process.env` from the closest `.env` at or above cwd; already-set variables win.
-  CLI-only concern, not exported from `index.ts`; `cli.test.ts`'s `captureMain` stubs the
-  `CliDeps.loadEnv` seam so the repo's real `.env` never leaks into tests.
+
+**`src/web/` — the `--web` frontends (all CLI-only concerns, not exported from
+`index.ts`):**
+
 - `webServer.ts` — shared plumbing for both `--web` servers: 127.0.0.1-only `node:http`
   server with the one-time token on every route (`startWebServer`) + the SSE snapshot
-  broadcaster both sessions extend (`SnapshotSession`). CLI-only concern, not exported
-  from `index.ts`.
+  broadcaster both sessions extend (`SnapshotSession`).
 - `webInterview.ts` — the `--web` presenter for both the generate and update
   interviews: SSE state pushes + JSON answer posts over a `webServer.ts` server,
-  back-navigation by answer-replay (§10a). CLI-only concern, not exported from
-  `index.ts`.
+  back-navigation by answer-replay (§10a).
 - `webInterviewPage.ts` — the single-file browser page served by `webInterview.ts`
   (inline CSS/JS in one template literal; the embedded script avoids backticks and
   `${` so the literal needs no escaping; all dynamic text rendered via DOM APIs, never
@@ -123,14 +132,20 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
 - `webReport.ts` — the `judge --web` server, on the same `webServer.ts` plumbing;
   pushes per-case judging progress then the final report, and blocks until the page
   posts `/ack` (§10b). Judging stays in judge.ts (the CLI passes a `judgeCase` seam).
-  CLI-only concern, not exported from `index.ts`.
 - `webReportPage.ts` — the single-file report page served by `webReport.ts`; same
   conventions and visual language as `webInterviewPage.ts`.
+
+**`src/` root — entry points and CLI-only helpers:**
+
+- `env.ts` — nearest-`.env` discovery (`loadNearestDotEnv`/`applyNearestDotEnv`): the CLI
+  fills `process.env` from the closest `.env` at or above cwd; already-set variables win.
+  CLI-only concern, not exported from `index.ts`; `cli.test.ts`'s `captureMain` stubs the
+  `CliDeps.loadEnv` seam so the repo's real `.env` never leaks into tests.
 - `cli.ts` — dispatch, report formatting, readline wiring, browser opener, `CliDeps`
   injection.
-- `index.ts` — public exports. `taxFixtures.ts`, `sseTestClient.ts`,
-  `webInterviewTestClient.ts`, `webReportTestClient.ts` — test-only helpers (tax cases
-  as TS data; SSE clients standing in for the two browser pages, sharing the
+- `index.ts` — public exports. `core/taxFixtures.ts`, `web/sseTestClient.ts`,
+  `web/webInterviewTestClient.ts`, `web/webReportTestClient.ts` — test-only helpers (tax
+  cases as TS data; SSE clients standing in for the two browser pages, sharing the
   `sseTestClient.ts` stream machinery). None are packed/exported.
 
 ## 5. Event schema (tool convention, NOT part of the standard)
@@ -394,12 +409,12 @@ editing a spec means refreshing the IR's `source` too:
 
 - `primary-source-tax-research/` — the semantic showcase (semantic trigger + semantic
   check). Its `judge.yaml` is the reference IR fixture for `ir.test.ts`/`judge.test.ts`
-  via relative URL. `src/taxFixtures.ts` is the same six cases as TS data for tests
+  via relative URL. `src/core/taxFixtures.ts` is the same six cases as TS data for tests
   (regenerate the JSONs on fixture changes).
 - `verified-refund-support/` and `staged-rollout-deploys/` — **predicate-only** examples
   (all triggers and checks deterministic; between them they cover all five predicate
   types plus `after:`, `distinctBy`, `contentIncludes`, and any-of patterns).
-  `src/examples.test.ts` re-derives every checked-in expected verdict offline with a
+  `src/core/examples.test.ts` re-derives every checked-in expected verdict offline with a
   throwing completion seam — if you edit these fixtures or IRs, the expected labels must
   stay reproducible with zero LLM calls. Their trajectories are deliberate traps for
   holistic LLM judges (buried forbidden events, distinct-count, attempts-vs-outcomes,

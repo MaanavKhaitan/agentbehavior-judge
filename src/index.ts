@@ -10,8 +10,8 @@ export {
   type PredicateCheck,
   type SemanticCheck,
   type Trigger,
-} from "./ir.js";
-export { loadBehaviorSpec, type BehaviorSpec } from "./spec.js";
+} from "./core/ir.js";
+export { loadBehaviorSpec, type BehaviorSpec } from "./core/spec.js";
 export {
   loadTrajectoryFile,
   type AgentTrajectory,
@@ -20,14 +20,14 @@ export {
   type NaReason,
   type TrajectoryCase,
   type TrajectoryEvent,
-} from "./trajectory.js";
+} from "./core/trajectory.js";
 export {
   evaluatePredicate,
   findMatches,
   matchesAny,
   matchesEvent,
   type PredicateResult,
-} from "./predicates.js";
+} from "./core/predicates.js";
 export {
   completeJsonWithRetry,
   completeWithBraintrustGateway,
@@ -35,14 +35,14 @@ export {
   type GatewayMessage,
   type GatewayOptions,
   type JudgeCompletion,
-} from "./gateway.js";
+} from "./core/gateway.js";
 export {
   buildSemanticCheckMessages,
   buildVerifyFalseMessages,
   parseSemanticResult,
   type EventCitation,
   type SemanticResult,
-} from "./semantic.js";
+} from "./core/semantic.js";
 export {
   compareToExpected,
   judgeTrajectory,
@@ -53,7 +53,7 @@ export {
   type MetaComparison,
   type TrajectoryJudgment,
   type Verification,
-} from "./judge.js";
+} from "./core/judge.js";
 export {
   extractMetaBehaviorNames,
   extractVocabulary,
@@ -68,7 +68,7 @@ export {
   type InterviewInput,
   type SpecSection,
   type VocabularySets,
-} from "./generate.js";
+} from "./interview/generate.js";
 export {
   computeSectionDelta,
   planUpdate,
@@ -77,4 +77,4 @@ export {
   type UpdateEntry,
   type UpdateInput,
   type UpdatePlan,
-} from "./update.js";
+} from "./interview/update.js";
