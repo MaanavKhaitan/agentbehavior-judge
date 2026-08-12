@@ -43,6 +43,7 @@ import {
   type SemanticCheck,
   type Trigger,
 } from "./ir.js";
+import { flattenWhitespace } from "./text.js";
 import type { AgentTrajectory } from "./trajectory.js";
 
 // ---------------------------------------------------------------------------
@@ -87,10 +88,6 @@ export function planUpdate(existing: JudgeIr, sections: SpecSection[]): UpdatePl
 // whose quotes vanished are dropped; proposal clauses with new quotes are the
 // deltas the interview asks about.
 // ---------------------------------------------------------------------------
-
-function flattenWhitespace(text: string): string {
-  return text.replaceAll(/\s+/g, " ").trim();
-}
 
 export function quoteInSection(quote: string, sectionBody: string): boolean {
   return flattenWhitespace(sectionBody).includes(flattenWhitespace(quote));
