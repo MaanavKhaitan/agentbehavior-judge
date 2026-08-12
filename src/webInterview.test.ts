@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { serializeIr, type JudgeIr } from "./ir.js";
+import { serializeIr, type JudgeIr, type MetaBehaviorIr } from "./ir.js";
 import { taxCase } from "./taxFixtures.js";
-import { runWebInterview } from "./webInterview.js";
+import { runWebInterview, runWebUpdateInterview } from "./webInterview.js";
 import { driveConnected, driveInterview, InterviewClient } from "./webInterviewTestClient.js";
 
 const behaviorBody = `# Primary-source tax research
@@ -173,7 +173,12 @@ describe("runWebInterview", () => {
       await client.answer(4, { kind: "accept" });
 
       const confirm = await client.nextStep();
-      expect(confirm.state.step).toMatchObject({ kind: "confirm", outPath: "/virtual/judge.yaml" });
+      expect(confirm.state.step).toMatchObject({
+        kind: "confirm",
+        outPath: "/virtual/judge.yaml",
+        // Plain generate has no update plan; the page keeps the generic copy.
+        update: null,
+      });
       const summary = confirm.state.step!.summary as Array<Record<string, unknown>>;
       expect(summary).toHaveLength(2);
       expect(summary[1]).toMatchObject({
@@ -306,5 +311,380 @@ describe("runWebInterview", () => {
     await expect(result).rejects.toThrow("gateway down");
     const interviewUrl = new URL(await url);
     await expect(fetch(interviewUrl)).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Update mode (`generate --web --update`): the same server around the update
+// driver. Fixtures mirror update.test.ts.
+// ---------------------------------------------------------------------------
+
+const SECTION_1_HEADING = "Read the tax research skill before beginning source research";
+const SECTION_1_BODY =
+  "When beginning source research to answer a tax question, the agent first reads the tax research skill, before searching or opening a source.";
+const SECTION_2_HEADING = "Consult primary sources before answering";
+const SECTION_2_BODY =
+  "Before deciding on the answer, it reads the relevant primary source and bases its conclusion on that source.";
+
+const updateBaseBody = `# Primary-source tax research
+
+## ${SECTION_1_HEADING}
+
+${SECTION_1_BODY}
+
+## ${SECTION_2_HEADING}
+
+${SECTION_2_BODY}
+`;
+
+function meta1(): MetaBehaviorIr {
+  return {
+    name: SECTION_1_HEADING,
+    trigger: {
+      description: "The agent begins source research.",
+      match: [{ action: "web_search" }, { action: "open_url" }],
+    },
+    checks: [
+      {
+        type: "ordering",
+        quote: "the agent first reads the tax research skill, before searching or opening a source",
+        first: { action: "read_skill" },
+        before: [{ action: "web_search" }, { action: "open_url" }],
+      },
+    ],
+    semanticChecks: [],
+    source: SECTION_1_BODY,
+  };
+}
+
+function meta2(): MetaBehaviorIr {
+  return {
+    name: SECTION_2_HEADING,
+    trigger: { description: "The agent answers a tax question.", semantic: true },
+    checks: [
+      {
+        type: "ordering",
+        quote: "Before deciding on the answer, it reads the relevant primary source",
+        first: { action: "open_url_result", metadata: { sourceType: "primary" } },
+        before: { action: "final_answer" },
+      },
+    ],
+    semanticChecks: [
+      {
+        quote: "bases its conclusion on that source",
+        question: "Does the final answer base its conclusion on the primary source the agent read?",
+      },
+    ],
+    source: SECTION_2_BODY,
+  };
+}
+
+function existingIr(): JudgeIr {
+  return {
+    version: 1,
+    behavior: "primary-source-tax-research",
+    metaBehaviors: [meta1(), meta2()],
+  };
+}
+
+const CITES_SENTENCE = "It cites that primary source in its final answer.";
+const editedSection2 = `${SECTION_2_BODY} ${CITES_SENTENCE}`;
+const editedBody = updateBaseBody.replace(SECTION_2_BODY, editedSection2);
+
+const updateProposal = JSON.stringify({
+  metaBehaviors: [
+    {
+      name: SECTION_2_HEADING,
+      trigger: { description: "The agent answers a tax question.", semantic: true },
+      checks: meta2().checks,
+      semanticChecks: [
+        ...meta2().semanticChecks,
+        {
+          quote: "It cites that primary source in its final answer",
+          question: "Does the final answer cite the primary source?",
+        },
+      ],
+    },
+  ],
+});
+
+function triageResponse(
+  verdicts: Record<string, "unaffected" | "re_ask">,
+  reasons: Record<string, string> = {},
+): string {
+  return JSON.stringify({
+    items: Object.entries(verdicts).map(([id, verdict]) => ({
+      id,
+      verdict,
+      reason: reasons[id] ?? "scripted reason",
+    })),
+  });
+}
+
+function startUpdateInterview(options: { body: string; existing: JudgeIr; completions: string[] }) {
+  const written: string[] = [];
+  const logs: string[] = [];
+  const completionCalls: unknown[] = [];
+  const completionQueue = [...options.completions];
+  let resolveUrl!: (url: string) => void;
+  const url = new Promise<string>((resolve) => {
+    resolveUrl = resolve;
+  });
+  const result = runWebUpdateInterview({
+    input: {
+      behaviorName: "primary-source-tax-research",
+      behaviorBody: options.body,
+      existing: options.existing,
+      trajectories: [taxCase("secondary-then-primary").trajectory],
+    },
+    complete: (messages) => {
+      completionCalls.push(messages);
+      const next = completionQueue.shift();
+      return next === undefined
+        ? Promise.reject(new Error("unexpected LLM call"))
+        : Promise.resolve(next);
+    },
+    outPath: "/virtual/judge.yaml",
+    writeIr: (ir: JudgeIr) => {
+      written.push(serializeIr(ir));
+      return Promise.resolve("/virtual/judge.yaml");
+    },
+    log: (line) => {
+      logs.push(line);
+    },
+    openBrowser: (interviewUrl) => {
+      resolveUrl(interviewUrl);
+    },
+  });
+  return { url, result, written, logs, completionCalls };
+}
+
+describe("runWebUpdateInterview", () => {
+  it("carries an unchanged spec straight to the confirm card with zero LLM calls", async () => {
+    const { url, result, written, logs, completionCalls } = startUpdateInterview({
+      body: updateBaseBody,
+      existing: existingIr(),
+      completions: [],
+    });
+    const client = await InterviewClient.connect(await url);
+
+    try {
+      const confirm = await client.nextStep();
+      expect(confirm.state.stepId).toBe(0);
+      expect(confirm.state.canGoBack).toBe(false);
+      expect(confirm.state.step).toMatchObject({ kind: "confirm", outPath: "/virtual/judge.yaml" });
+      // The page renders the explicit nothing-changed state from this.
+      expect(confirm.state.step!.update).toEqual({
+        unchanged: 2,
+        changed: 0,
+        added: 0,
+        removed: [],
+        hasChanges: false,
+      });
+      const summary = confirm.state.step!.summary as Array<Record<string, unknown>>;
+      expect(summary.map((meta) => meta.status)).toEqual(["unchanged", "unchanged"]);
+      await client.answer(0, { kind: "save" });
+
+      const done = await client.next();
+      expect(done.state).toMatchObject({ type: "done", written: "/virtual/judge.yaml" });
+
+      const ir = await result;
+      expect(ir!.metaBehaviors).toEqual([meta1(), meta2()]);
+      expect(completionCalls).toEqual([]);
+      expect(written).toHaveLength(1);
+      expect(logs.some((line) => line.includes("unchanged; carried over"))).toBe(true);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("streams carried-batch, re-ask, and new-clause step payloads", async () => {
+    const flagged = triageResponse(
+      { trigger: "unaffected", "check-1": "re_ask", "semantic-1": "unaffected" },
+      { "check-1": "the edit may redefine what counts as a primary source" },
+    );
+    const { url, result, written } = startUpdateInterview({
+      body: editedBody,
+      existing: existingIr(),
+      completions: [updateProposal, flagged],
+    });
+    const client = await InterviewClient.connect(await url);
+
+    try {
+      const batch = await client.nextStep();
+      expect(batch.state.step).toMatchObject({
+        kind: "carriedBatch",
+        metaName: SECTION_2_HEADING,
+        position: { metaIndex: 1, metaCount: 2 },
+      });
+      const items = batch.state.step!.items as Array<Record<string, unknown>>;
+      expect(items).toHaveLength(2);
+      expect(items[0]).toMatchObject({
+        kind: "trigger",
+        trigger: { semantic: true, description: "The agent answers a tax question." },
+      });
+      expect(items[1]).toMatchObject({
+        kind: "semantic",
+        quote: "bases its conclusion on that source",
+      });
+      await client.answer(0, { kind: "keep" });
+
+      const reAsked = await client.nextStep();
+      expect(reAsked.state.step).toMatchObject({
+        kind: "check",
+        check: { type: "ordering" },
+        reAskReason: "the edit may redefine what counts as a primary source",
+      });
+      await client.answer(1, { kind: "accept" });
+
+      const newSemantic = await client.nextStep();
+      expect(newSemantic.state.step).toMatchObject({
+        kind: "semanticCheck",
+        quote: "It cites that primary source in its final answer",
+        demoted: false,
+        reAskReason: null,
+      });
+      await client.answer(2, { kind: "accept" });
+
+      const confirm = await client.nextStep();
+      expect(confirm.state.step).toMatchObject({
+        kind: "confirm",
+        update: { unchanged: 1, changed: 1, added: 0, hasChanges: true },
+      });
+      const summary = confirm.state.step!.summary as Array<Record<string, unknown>>;
+      expect(summary.map((meta) => meta.status)).toEqual(["unchanged", "changed"]);
+      await client.answer(3, { kind: "save" });
+
+      const done = await client.next();
+      expect(done.state.type).toBe("done");
+
+      const ir = await result;
+      const updated = ir!.metaBehaviors[1]!;
+      expect(updated.checks).toEqual(meta2().checks);
+      expect(updated.semanticChecks.map((check) => check.quote)).toEqual([
+        "bases its conclusion on that source",
+        "It cites that primary source in its final answer",
+      ]);
+      expect(updated.source).toBe(editedSection2);
+      expect(written).toHaveLength(1);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("offers keep-previous on a changed trigger and batch decline falls through", async () => {
+    const editedSection1 = `${SECTION_1_BODY} This also applies when consulting internal tax databases.`;
+    const body = updateBaseBody.replace(SECTION_1_BODY, editedSection1);
+    const proposal = JSON.stringify({
+      metaBehaviors: [
+        {
+          name: SECTION_1_HEADING,
+          trigger: {
+            description: "The agent begins source research.",
+            match: [{ action: "web_search" }, { action: "open_url" }, { action: "db_lookup" }],
+          },
+          checks: meta1().checks,
+          semanticChecks: [],
+        },
+      ],
+    });
+    const { url, result } = startUpdateInterview({
+      body,
+      existing: existingIr(),
+      completions: [proposal, triageResponse({ "check-1": "unaffected" })],
+    });
+    const client = await InterviewClient.connect(await url);
+
+    try {
+      const changedTrigger = await client.nextStep();
+      expect(changedTrigger.state.step).toMatchObject({
+        kind: "changedTrigger",
+        metaName: SECTION_1_HEADING,
+        previous: { semantic: false, match: [{ action: "web_search" }, { action: "open_url" }] },
+        proposed: {
+          semantic: false,
+          match: [{ action: "web_search" }, { action: "open_url" }, { action: "db_lookup" }],
+        },
+      });
+      const evidence = changedTrigger.state.step!.evidence as { sample: { action: string } };
+      expect(evidence.sample.action).toBe("web_search");
+      // db_lookup never appears in the samples; the warning carries through.
+      expect(changedTrigger.state.step!.unobserved).toEqual(["action `db_lookup`"]);
+      await client.answer(0, { kind: "keepPrevious" });
+
+      const batch = await client.nextStep();
+      expect(batch.state.step).toMatchObject({ kind: "carriedBatch" });
+      expect(batch.state.step!.items as unknown[]).toHaveLength(1);
+      await client.answer(1, { kind: "review" });
+
+      const check = await client.nextStep();
+      // Individually reviewed via the declined batch, not a triage flag.
+      expect(check.state.step).toMatchObject({ kind: "check", reAskReason: null });
+      await client.answer(2, { kind: "accept" });
+
+      const done = await driveConnected(client, [{ kind: "save" }]);
+      expect(done.state.type).toBe("done");
+
+      const ir = await result;
+      expect(ir!.metaBehaviors[0]!.trigger).toEqual(meta1().trigger);
+      expect(ir!.metaBehaviors[0]!.checks).toEqual(meta1().checks);
+      expect(ir!.metaBehaviors[0]!.source).toBe(editedSection1);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("replays recorded answers on back without re-asking the model or the triage", async () => {
+    const allUnaffected = triageResponse({
+      trigger: "unaffected",
+      "check-1": "unaffected",
+      "semantic-1": "unaffected",
+    });
+    const { url, result, logs, completionCalls } = startUpdateInterview({
+      body: editedBody,
+      existing: existingIr(),
+      completions: [updateProposal, allUnaffected],
+    });
+    const client = await InterviewClient.connect(await url);
+
+    try {
+      const batch = await client.nextStep();
+      expect(batch.state.step).toMatchObject({ kind: "carriedBatch" });
+      await client.answer(0, { kind: "keep" });
+
+      const newSemantic = await client.nextStep();
+      expect(newSemantic.state.stepId).toBe(1);
+      expect(await client.back()).toBe(200);
+
+      const replayed = await client.nextStep();
+      expect(replayed.state.stepId).toBe(0);
+      expect(replayed.state.step).toMatchObject({ kind: "carriedBatch" });
+      await client.answer(0, { kind: "keep" });
+
+      const done = await driveConnected(client, [{ kind: "accept" }, { kind: "save" }]);
+      expect(done.state.type).toBe("done");
+
+      await result;
+      expect(completionCalls).toHaveLength(2);
+      // The restarted driver re-emits its notes; replayed ones must not
+      // duplicate in the terminal log.
+      expect(logs.filter((line) => line.includes("— section changed."))).toHaveLength(1);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("cancelling the final confirmation writes nothing", async () => {
+    const { url, result, written } = startUpdateInterview({
+      body: updateBaseBody,
+      existing: existingIr(),
+      completions: [],
+    });
+
+    const finalSnapshot = await driveInterview(await url, [{ kind: "cancel" }]);
+
+    expect(finalSnapshot.state).toMatchObject({ type: "done", written: null });
+    expect(await result).toBeUndefined();
+    expect(written).toHaveLength(0);
   });
 });

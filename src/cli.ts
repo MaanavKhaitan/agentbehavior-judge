@@ -9,7 +9,7 @@ import { parseArgs as parseNodeArgs } from "node:util";
 import { applyNearestDotEnv } from "./env.js";
 import { runInterview } from "./generate.js";
 import { runUpdateInterview } from "./update.js";
-import { runWebInterview } from "./webInterview.js";
+import { runWebInterview, runWebUpdateInterview } from "./webInterview.js";
 import { runWebReport } from "./webReport.js";
 import { completeWithBraintrustGateway, type JudgeCompletion } from "./gateway.js";
 import {
@@ -91,12 +91,12 @@ binding deterministic checks to the event vocabulary observed in the sample
 trajectories. With --update it diffs the spec against an existing IR instead:
 unchanged sections carry over without questions, and the interview covers only
 changed, added, and removed sections (--out defaults to the --update file).
-With --web the full interview runs in your browser on a local-only server
-(127.0.0.1, one-time token); the terminal prints the URL and still writes the
-file. judge runs an IR over trajectory JSON files; with --web the report
-renders in your browser on the same kind of local-only server, and the CLI
-exits once the page has loaded (the plain-text report still prints to the
-terminal). calibrate compares judge verdicts against expected verdicts
+With --web the interview — plain or --update — runs in your browser on a
+local-only server (127.0.0.1, one-time token); the terminal prints the URL and
+still writes the file. judge runs an IR over trajectory JSON files; with --web
+the report renders in your browser on the same kind of local-only server, and
+the CLI exits once the page has loaded (the plain-text report still prints to
+the terminal). calibrate compares judge verdicts against expected verdicts
 recorded in the trajectory files.
 
 Trajectory JSON files contain a trajectory ({id, complete, events}), a
@@ -329,27 +329,32 @@ async function runGenerateCommand(args: ParsedArgs, deps: CliDeps): Promise<numb
   const outPath = args.out ?? args.update ?? path.join(path.dirname(record.location), "judge.yaml");
 
   if (args.web) {
-    if (args.update !== undefined) {
-      process.stderr.write(
-        "error: --web does not support --update yet; run the update interview in the terminal.\n",
-      );
-      return 1;
-    }
-    const ir = await runWebInterview({
-      input: {
-        behaviorName: record.name,
-        behaviorBody: record.body,
-        trajectories: cases.map((trajectoryCase) => trajectoryCase.trajectory),
-      },
+    const trajectories = cases.map((trajectoryCase) => trajectoryCase.trajectory);
+    const webOptions = {
       complete,
       outPath,
-      writeIr: async (generated) => {
+      writeIr: async (generated: JudgeIr) => {
         await fs.writeFile(outPath, serializeIr(generated), "utf8");
         return outPath;
       },
-      log: (line) => process.stdout.write(`${line}\n`),
+      log: (line: string) => process.stdout.write(`${line}\n`),
       openBrowser: deps.openBrowser ?? openBrowserCommand,
-    });
+    };
+    const ir =
+      args.update === undefined
+        ? await runWebInterview({
+            input: { behaviorName: record.name, behaviorBody: record.body, trajectories },
+            ...webOptions,
+          })
+        : await runWebUpdateInterview({
+            input: {
+              behaviorName: record.name,
+              behaviorBody: record.body,
+              existing: await loadIrFile(args.update),
+              trajectories,
+            },
+            ...webOptions,
+          });
 
     if (ir === undefined) {
       process.stdout.write("Aborted; nothing written.\n");
