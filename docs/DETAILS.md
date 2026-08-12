@@ -1,4 +1,4 @@
-# agentbehavior-judge: the detailed guide
+# behavior-judge: the detailed guide
 
 This is the long-form documentation — full predicate semantics, the judging pipeline,
 calibration methodology, and the `--web` frontends. For the concise overview, start with
@@ -283,7 +283,7 @@ afterwards is the safety net for anything both the quote diff and the triage mis
 ## Library use
 
 ```ts
-import { judgeTrajectory, parseIr, loadTrajectoryFile } from "agentbehavior-judge";
+import { judgeTrajectory, parseIr, loadTrajectoryFile } from "behavior-judge";
 
 const ir = parseIr(await fs.readFile("judge.yaml", "utf8"));
 const [trajectoryCase] = await loadTrajectoryFile("trajectory.json");
