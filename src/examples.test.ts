@@ -3,8 +3,10 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vite-plus/test";
 
+import { splitSpecSections } from "./generate.js";
 import { parseIr, serializeIr } from "./ir.js";
 import { compareToExpected, judgeTrajectory } from "./judge.js";
+import { loadBehaviorSpec } from "./spec.js";
 import { loadTrajectoryFile } from "./trajectory.js";
 
 /**
@@ -15,6 +17,27 @@ import { loadTrajectoryFile } from "./trajectory.js";
  * judge.test.ts with scripted completions.
  */
 const PREDICATE_ONLY_EXAMPLES = ["verified-refund-support", "staged-rollout-deploys"];
+
+const ALL_EXAMPLES = ["primary-source-tax-research", ...PREDICATE_ONLY_EXAMPLES];
+
+describe("example IR source fields", () => {
+  // `generate --update` relies on `source` recording the exact section body a
+  // meta was reviewed against; the checked-in examples must stay in sync with
+  // their BEHAVIOR.md files.
+  for (const example of ALL_EXAMPLES) {
+    it(`examples/${example}: every meta's source matches its spec section`, async () => {
+      const exampleUrl = new URL(`../examples/${example}/`, import.meta.url);
+      const spec = await loadBehaviorSpec(fileURLToPath(exampleUrl));
+      const sections = new Map(
+        splitSpecSections(spec.body).map((section) => [section.heading, section.body]),
+      );
+      const ir = parseIr(await readFile(new URL("judge.yaml", exampleUrl), "utf8"));
+      for (const meta of ir.metaBehaviors) {
+        expect(meta.source, `meta "${meta.name}"`).toBe(sections.get(meta.name));
+      }
+    });
+  }
+});
 
 for (const example of PREDICATE_ONLY_EXAMPLES) {
   describe(`examples/${example}`, () => {

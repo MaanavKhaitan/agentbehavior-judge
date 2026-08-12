@@ -227,6 +227,9 @@ class WebInterviewSession {
   // same step N — which is what makes the per-method casts sound.
   readonly presenter: InterviewPresenter = {
     note: (note) => {
+      // Markdown-style rule headers are terminal presentation; the browser
+      // shows the rule name on the card itself.
+      if (note.kind === "metaHeader") return;
       // Replayed runs re-emit earlier notes; only log at the live frontier.
       if (this.cursor === this.recorded.length) this.log(renderNote(note));
     },

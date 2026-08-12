@@ -16,7 +16,7 @@ hand-building judging machinery. `behavior-judge` closes that gap:
 - **`calibrate`** measures judge agreement against trajectories with known verdicts.
 
 ```
-behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>] [--model <m>] [--web]
+behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--web]
 behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 ```
@@ -240,6 +240,31 @@ requirement.
 `generate` reads the spec's frontmatter (`name`, `description`) and markdown body
 directly. To lint a spec against the full Agent Behavior standard, use the
 [`agentbehavior` validator CLI](https://github.com/braintrustdata/agentbehavior).
+
+### Updating an IR after a spec edit
+
+```console
+$ behavior-judge generate .agents/behaviors/my-behavior sample-trajectories.json --update judge.yaml
+```
+
+Once a `judge.yaml` exists, editing the spec doesn't mean redoing the whole interview.
+Each generated meta-behavior records the spec section it was reviewed against (the
+`source` field), so `--update` diffs the current spec against the existing IR and
+re-interviews only the difference: unchanged sections carry over with zero questions and
+zero LLM calls, removed sections drop with a notice, and new sections are interviewed
+like plain `generate`.
+
+Within an edited section, clauses whose quoted spec sentences survive verbatim are
+carried from the existing file — your earlier answers and hand edits win over any fresh
+model output — and collapse into a single batch confirmation, while edited or new
+sentences get individual questions. Because an edit can also shift the meaning of a
+sentence it didn't touch (say, redefining a term a matcher relies on), one scoped LLM
+call reviews the carried clauses against the before/after section texts and can flag
+them for individual re-asking, with its reason printed. That call is demote-only: it can
+make the review more careful, never less — and answering `n` at the batch confirmation
+always gets you the full clause-by-clause walkthrough. The updated YAML is written back
+to the `--update` path (or to `--out`). Running `calibrate` afterwards is the safety net
+for anything both the quote diff and the triage missed.
 
 ## Library use
 

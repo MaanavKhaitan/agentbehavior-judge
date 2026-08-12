@@ -57,12 +57,24 @@ export {
 export {
   extractMetaBehaviorNames,
   extractVocabulary,
+  normalizeSectionBody,
   runInterview,
+  splitSpecSections,
   unobservedInCheck,
   unobservedInTrigger,
   vocabularySets,
   type ActionVocabulary,
   type InterviewDeps,
   type InterviewInput,
+  type SpecSection,
   type VocabularySets,
 } from "./generate.js";
+export {
+  computeSectionDelta,
+  planUpdate,
+  runUpdateInterview,
+  type SectionDelta,
+  type UpdateEntry,
+  type UpdateInput,
+  type UpdatePlan,
+} from "./update.js";

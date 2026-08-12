@@ -23,16 +23,51 @@ export interface ActionVocabulary {
   sampleEvent: TrajectoryEvent;
 }
 
-export function extractMetaBehaviorNames(behaviorBody: string): string[] {
+export interface SpecSection {
+  /** H2 heading text — the meta-behavior name. */
+  heading: string;
+  /** Normalized section body: the text between this heading and the next H2. */
+  body: string;
+}
+
+/**
+ * Normalize a spec section body so equality comparison (and the `source`
+ * field recorded in the IR) is stable across trailing whitespace and blank
+ * line runs.
+ */
+export function normalizeSectionBody(text: string): string {
+  const lines = text.split(/\r?\n/).map((line) => line.trimEnd());
+  const collapsed: string[] = [];
+  for (const line of lines) {
+    if (line === "" && (collapsed.length === 0 || collapsed.at(-1) === "")) continue;
+    collapsed.push(line);
+  }
+  while (collapsed.at(-1) === "") collapsed.pop();
+  return collapsed.join("\n");
+}
+
+/** Split a spec body into its H2 sections; text before the first H2 is preamble, not a section. */
+export function splitSpecSections(behaviorBody: string): SpecSection[] {
   const matches = [...behaviorBody.matchAll(/^##[ \t]+(.+?)[ \t]*$/gm)];
-  const names = matches.map((match) => match[1]!.trim());
-  const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+  const headings = matches.map((match) => match[1]!.trim());
+  const duplicates = headings.filter((name, index) => headings.indexOf(name) !== index);
   if (duplicates.length > 0) {
     throw new Error(
       `Behavior contains duplicate H2 headings: ${[...new Set(duplicates)].join(", ")}.`,
     );
   }
-  return names;
+  return matches.map((match, index) => {
+    const start = (match.index ?? 0) + match[0].length;
+    const end = index + 1 < matches.length ? (matches[index + 1]!.index ?? 0) : behaviorBody.length;
+    return {
+      heading: headings[index]!,
+      body: normalizeSectionBody(behaviorBody.slice(start, end)),
+    };
+  });
+}
+
+export function extractMetaBehaviorNames(behaviorBody: string): string[] {
+  return splitSpecSections(behaviorBody).map((section) => section.heading);
 }
 
 export function extractVocabulary(trajectories: AgentTrajectory[]): ActionVocabulary[] {
@@ -53,7 +88,7 @@ export function extractVocabulary(trajectories: AgentTrajectory[]): ActionVocabu
   return [...byAction.values()].sort((a, b) => a.action.localeCompare(b.action));
 }
 
-const PROPOSAL_SYSTEM_PROMPT = `You compile an Agent Behavior spec into a judge intermediate representation (IR).
+export const PROPOSAL_SYSTEM_PROMPT = `You compile an Agent Behavior spec into a judge intermediate representation (IR).
 
 The IR decomposes the spec into meta-behaviors (one per H2 section). Each meta-behavior has:
 - "trigger": when the meta-behavior applies. Either {"description", "match"} (an event matcher, or array of matchers meaning any-of) or {"description", "semantic": true} when no event pattern can detect it.
@@ -117,7 +152,7 @@ export function parseProposal(response: string, behaviorName: string): JudgeIr {
   return normalizeProposal(parseIr(stringifyYaml(draft)));
 }
 
-function capitalizeFirst(text: string): string {
+export function capitalizeFirst(text: string): string {
   return text.length === 0 ? text : text.charAt(0).toUpperCase() + text.slice(1);
 }
 
@@ -211,7 +246,10 @@ export interface InterviewInput {
 // (runProposalInterview) is presentation-agnostic: it walks the proposal and
 // asks an InterviewPresenter one step at a time. The readline CLI
 // (createTextPresenter) and the --web browser UI are two presenters over the
-// same driver, so the demote/drop/edit rules cannot drift between them.
+// same driver, so the demote/drop/edit rules cannot drift between them. The
+// deps-based helpers exported below (interviewTrigger/interviewChecks/
+// interviewSemanticChecks, reused by update.ts) drive the same review logic
+// through a one-off text presenter.
 // ---------------------------------------------------------------------------
 
 /** Which slot of a check a pattern occupies, for labeling evidence. */
@@ -300,6 +338,7 @@ export type InterviewNote =
   | { kind: "vocabulary"; actionCount: number; trajectoryCount: number }
   | { kind: "requestingProposal" }
   | { kind: "namesIntro" }
+  | { kind: "metaHeader"; name: string }
   | { kind: "metaDropped"; name: string };
 
 export interface InterviewPresenter {
@@ -316,6 +355,8 @@ export interface InterviewContext {
   hasHeadings: boolean;
   trajectories: AgentTrajectory[];
   sets: VocabularySets;
+  /** H2 sections of the spec; each kept meta records its section body as `source`. */
+  sections: SpecSection[];
 }
 
 export interface PreparedInterview {
@@ -331,6 +372,8 @@ export function renderNote(note: InterviewNote): string {
       return "Requesting the IR proposal from the model; this can take a minute or two...";
     case "namesIntro":
       return "The spec has no H2 headings; confirm the proposed meta-behavior names.";
+    case "metaHeader":
+      return `\n## ${note.name}`;
     case "metaDropped":
       return `note: "${note.name}" has no checks left; dropping it.`;
   }
@@ -352,7 +395,8 @@ export async function prepareInterview(
     );
   }
 
-  const metaBehaviorNames = extractMetaBehaviorNames(input.behaviorBody);
+  const sections = splitSpecSections(input.behaviorBody);
+  const metaBehaviorNames = sections.map((section) => section.heading);
   const vocabulary = extractVocabulary(input.trajectories);
   note?.({
     kind: "vocabulary",
@@ -376,9 +420,10 @@ export async function prepareInterview(
     proposal,
     context: {
       behaviorName: input.behaviorName,
-      hasHeadings: metaBehaviorNames.length > 0,
+      hasHeadings: sections.length > 0,
       trajectories: input.trajectories,
       sets: vocabularySets(vocabulary),
+      sections,
     },
   };
 }
@@ -430,6 +475,232 @@ function checkEvidence(check: PredicateCheck, trajectories: AgentTrajectory[]): 
   return entries;
 }
 
+// ---------------------------------------------------------------------------
+// Text rendering primitives, shared by the text presenter and update.ts.
+// ---------------------------------------------------------------------------
+
+const EVIDENCE_PREFIX = "  evidence: ";
+const EVIDENCE_INDENT = " ".repeat(EVIDENCE_PREFIX.length);
+
+function clipContent(content: string, max = 80): string {
+  const flat = content.replaceAll(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+export function renderPattern(pattern: EventPattern): string {
+  return JSON.stringify(pattern);
+}
+
+function writeEvidenceLines(deps: Pick<InterviewDeps, "write">, entry: PatternEvidence): void {
+  if (entry.sample === undefined) {
+    deps.write(
+      entry.noMatchIsExpected
+        ? `${EVIDENCE_PREFIX}no sample event matches (expected — well-behaved samples should not exhibit a forbidden event)`
+        : `${EVIDENCE_PREFIX}no sample event matches`,
+    );
+    return;
+  }
+  const { trajectoryId, event, matcher } = entry.sample;
+  deps.write(`${EVIDENCE_PREFIX}${trajectoryId}/${event.id} (${event.actor} ${event.action})`);
+  // Show the event's values for the metadata keys the matcher binds to —
+  // the part of the matcher the action name alone can't confirm.
+  for (const key of Object.keys(matcher.metadata ?? {})) {
+    deps.write(`${EVIDENCE_INDENT}metadata.${key}: ${JSON.stringify(event.metadata?.[key] ?? "")}`);
+  }
+  const content = clipContent(event.content);
+  if (content.length > 0) deps.write(`${EVIDENCE_INDENT}content: ${JSON.stringify(content)}`);
+}
+
+export function writeEvidence(
+  deps: Pick<InterviewDeps, "write">,
+  trajectories: AgentTrajectory[],
+  pattern: EventPattern,
+  opts?: { noMatchIsExpected?: boolean },
+): void {
+  writeEvidenceLines(
+    deps,
+    patternEvidence(trajectories, "match", pattern, opts?.noMatchIsExpected ?? false),
+  );
+}
+
+export function writeUnobservedWarning(
+  deps: Pick<InterviewDeps, "write">,
+  problems: string[],
+): void {
+  if (problems.length === 0) return;
+  deps.write(
+    `  warning: references ${problems.join(", ")} not observed in any sample trajectory — accept only if your agent's instrumentation emits it`,
+  );
+}
+
+export async function askChoice(
+  deps: Pick<InterviewDeps, "ask" | "write">,
+  prompt: string,
+  choices: string[],
+): Promise<string> {
+  for (;;) {
+    const answer = (await deps.ask(`${prompt} `)).trim().toLowerCase();
+    if (answer === "" && choices.length > 0) return choices[0]!;
+    if (choices.includes(answer)) return answer;
+    deps.write(`Please answer one of: ${choices.join(", ")}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-item review: build the structured step, ask the presenter, apply the
+// answer. Used by the full-interview driver with real positions, and by the
+// exported deps-based helpers below with a one-off text presenter.
+// ---------------------------------------------------------------------------
+
+async function reviewTrigger(
+  trigger: Trigger,
+  trajectories: AgentTrajectory[],
+  sets: VocabularySets,
+  presenter: InterviewPresenter,
+  metaName: string,
+  position: StepPosition,
+): Promise<Trigger> {
+  const step: TriggerStep = {
+    kind: "trigger",
+    metaName,
+    trigger,
+    unobserved: unobservedInTrigger(trigger, sets),
+    position,
+    ...("match" in trigger
+      ? { evidence: patternEvidence(trajectories, "match", trigger.match) }
+      : {}),
+  };
+  const answer = await presenter.askTrigger(step);
+
+  if ("match" in trigger) {
+    if (answer.kind === "forceSemantic") {
+      return { description: trigger.description, semantic: true };
+    }
+    if (answer.kind === "edit") {
+      const description = answer.description.trim();
+      return description.length > 0
+        ? { ...trigger, description: capitalizeFirst(description) }
+        : trigger;
+    }
+    return trigger;
+  }
+
+  if (answer.kind === "edit") {
+    const description = answer.description.trim();
+    return description.length > 0 ? { description, semantic: true } : trigger;
+  }
+  return trigger;
+}
+
+async function reviewChecks(
+  proposedChecks: PredicateCheck[],
+  trajectories: AgentTrajectory[],
+  sets: VocabularySets,
+  presenter: InterviewPresenter,
+  metaName: string,
+  position: StepPosition,
+): Promise<{ checks: PredicateCheck[]; demoted: SemanticCheck[] }> {
+  const checks: PredicateCheck[] = [];
+  const demoted: SemanticCheck[] = [];
+  for (const [index, check] of proposedChecks.entries()) {
+    const answer = await presenter.askCheck({
+      kind: "check",
+      metaName,
+      check,
+      evidence: checkEvidence(check, trajectories),
+      unobserved: unobservedInCheck(check, sets),
+      position: { ...position, itemIndex: index, itemCount: proposedChecks.length },
+    });
+    if (answer.kind === "accept") checks.push(check);
+    if (answer.kind === "demote") {
+      demoted.push({
+        quote: check.quote,
+        question: `Does the agent's conduct satisfy this clause: "${check.quote}"?`,
+      });
+    }
+  }
+  return { checks, demoted };
+}
+
+async function reviewSemanticChecks(
+  candidates: Array<{ check: SemanticCheck; demoted: boolean }>,
+  presenter: InterviewPresenter,
+  metaName: string,
+  position: StepPosition,
+): Promise<SemanticCheck[]> {
+  const kept: SemanticCheck[] = [];
+  for (const [index, candidate] of candidates.entries()) {
+    const answer = await presenter.askSemanticCheck({
+      kind: "semanticCheck",
+      metaName,
+      check: candidate.check,
+      demoted: candidate.demoted,
+      position: { ...position, itemIndex: index, itemCount: candidates.length },
+    });
+    if (answer.kind === "drop") continue;
+    if (answer.kind === "edit") {
+      const question = answer.question.trim();
+      kept.push(
+        question.length > 0
+          ? { ...candidate.check, question: capitalizeFirst(question) }
+          : candidate.check,
+      );
+    } else {
+      kept.push(candidate.check);
+    }
+  }
+  return kept;
+}
+
+const STANDALONE_POSITION: StepPosition = { metaIndex: 0, metaCount: 1 };
+
+/** Deps-based per-trigger review (readline rendering); update.ts reuses it. */
+export async function interviewTrigger(
+  trigger: Trigger,
+  trajectories: AgentTrajectory[],
+  sets: VocabularySets,
+  deps: InterviewDeps,
+): Promise<Trigger> {
+  return reviewTrigger(
+    trigger,
+    trajectories,
+    sets,
+    createTextPresenter(deps),
+    "",
+    STANDALONE_POSITION,
+  );
+}
+
+/** Deps-based per-check review (readline rendering); update.ts reuses it. */
+export async function interviewChecks(
+  proposedChecks: PredicateCheck[],
+  trajectories: AgentTrajectory[],
+  sets: VocabularySets,
+  deps: InterviewDeps,
+): Promise<{ checks: PredicateCheck[]; demoted: SemanticCheck[] }> {
+  return reviewChecks(
+    proposedChecks,
+    trajectories,
+    sets,
+    createTextPresenter(deps),
+    "",
+    STANDALONE_POSITION,
+  );
+}
+
+/** Deps-based semantic-check review (readline rendering); update.ts reuses it. */
+export async function interviewSemanticChecks(
+  semanticChecks: SemanticCheck[],
+  deps: InterviewDeps,
+): Promise<SemanticCheck[]> {
+  return reviewSemanticChecks(
+    semanticChecks.map((check) => ({ check, demoted: false })),
+    createTextPresenter(deps),
+    "",
+    STANDALONE_POSITION,
+  );
+}
+
 async function namePhase(
   proposal: JudgeIr,
   context: InterviewContext,
@@ -457,106 +728,6 @@ async function namePhase(
   return kept;
 }
 
-async function triggerPhase(
-  meta: MetaBehaviorIr,
-  context: InterviewContext,
-  presenter: InterviewPresenter,
-  position: StepPosition,
-): Promise<Trigger> {
-  const trigger = meta.trigger;
-  const step: TriggerStep = {
-    kind: "trigger",
-    metaName: meta.name,
-    trigger,
-    unobserved: unobservedInTrigger(trigger, context.sets),
-    position,
-    ...("match" in trigger
-      ? { evidence: patternEvidence(context.trajectories, "match", trigger.match) }
-      : {}),
-  };
-  const answer = await presenter.askTrigger(step);
-
-  if ("match" in trigger) {
-    if (answer.kind === "forceSemantic")
-      return { description: trigger.description, semantic: true };
-    if (answer.kind === "edit") {
-      const description = answer.description.trim();
-      return description.length > 0
-        ? { ...trigger, description: capitalizeFirst(description) }
-        : trigger;
-    }
-    return trigger;
-  }
-
-  if (answer.kind === "edit") {
-    const description = answer.description.trim();
-    return description.length > 0 ? { description, semantic: true } : trigger;
-  }
-  return trigger;
-}
-
-async function checkPhase(
-  meta: MetaBehaviorIr,
-  context: InterviewContext,
-  presenter: InterviewPresenter,
-  position: StepPosition,
-): Promise<{ checks: PredicateCheck[]; demoted: SemanticCheck[] }> {
-  const checks: PredicateCheck[] = [];
-  const demoted: SemanticCheck[] = [];
-  for (const [index, check] of meta.checks.entries()) {
-    const answer = await presenter.askCheck({
-      kind: "check",
-      metaName: meta.name,
-      check,
-      evidence: checkEvidence(check, context.trajectories),
-      unobserved: unobservedInCheck(check, context.sets),
-      position: { ...position, itemIndex: index, itemCount: meta.checks.length },
-    });
-    if (answer.kind === "accept") checks.push(check);
-    if (answer.kind === "demote") {
-      demoted.push({
-        quote: check.quote,
-        question: `Does the agent's conduct satisfy this clause: "${check.quote}"?`,
-      });
-    }
-  }
-  return { checks, demoted };
-}
-
-async function semanticPhase(
-  meta: MetaBehaviorIr,
-  demoted: SemanticCheck[],
-  presenter: InterviewPresenter,
-  position: StepPosition,
-): Promise<SemanticCheck[]> {
-  const candidates = [
-    ...meta.semanticChecks.map((check) => ({ check, demoted: false })),
-    ...demoted.map((check) => ({ check, demoted: true })),
-  ];
-  const kept: SemanticCheck[] = [];
-  for (const [index, candidate] of candidates.entries()) {
-    const answer = await presenter.askSemanticCheck({
-      kind: "semanticCheck",
-      metaName: meta.name,
-      check: candidate.check,
-      demoted: candidate.demoted,
-      position: { ...position, itemIndex: index, itemCount: candidates.length },
-    });
-    if (answer.kind === "drop") continue;
-    if (answer.kind === "edit") {
-      const question = answer.question.trim();
-      kept.push(
-        question.length > 0
-          ? { ...candidate.check, question: capitalizeFirst(question) }
-          : candidate.check,
-      );
-    } else {
-      kept.push(candidate.check);
-    }
-  }
-  return kept;
-}
-
 /**
  * Walk a fetched proposal through the presenter, one step per trigger/check/
  * semantic check. Deterministic given (proposal, answers): no LLM calls, no
@@ -568,18 +739,45 @@ export async function runProposalInterview(
   presenter: InterviewPresenter,
 ): Promise<JudgeIr | undefined> {
   const named = await namePhase(proposal, context, presenter);
+  const sectionByName = new Map(context.sections.map((section) => [section.heading, section.body]));
 
   const metaBehaviors: MetaBehaviorIr[] = [];
   for (const [metaIndex, meta] of named.entries()) {
     const position: StepPosition = { metaIndex, metaCount: named.length };
-    const trigger = await triggerPhase(meta, context, presenter, position);
-    const { checks, demoted } = await checkPhase(meta, context, presenter, position);
-    const semanticChecks = await semanticPhase(meta, demoted, presenter, position);
+    presenter.note({ kind: "metaHeader", name: meta.name });
+    const trigger = await reviewTrigger(
+      meta.trigger,
+      context.trajectories,
+      context.sets,
+      presenter,
+      meta.name,
+      position,
+    );
+    const { checks, demoted } = await reviewChecks(
+      meta.checks,
+      context.trajectories,
+      context.sets,
+      presenter,
+      meta.name,
+      position,
+    );
+    const semanticChecks = await reviewSemanticChecks(
+      [
+        ...meta.semanticChecks.map((check) => ({ check, demoted: false })),
+        ...demoted.map((check) => ({ check, demoted: true })),
+      ],
+      presenter,
+      meta.name,
+      position,
+    );
     if (checks.length === 0 && semanticChecks.length === 0) {
       presenter.note({ kind: "metaDropped", name: meta.name });
       continue;
     }
-    metaBehaviors.push({ name: meta.name, trigger, checks, semanticChecks });
+    const kept: MetaBehaviorIr = { name: meta.name, trigger, checks, semanticChecks };
+    const source = sectionByName.get(meta.name);
+    if (source !== undefined && source.length > 0) kept.source = source;
+    metaBehaviors.push(kept);
   }
 
   if (metaBehaviors.length === 0) {
@@ -591,18 +789,6 @@ export async function runProposalInterview(
   return confirmed ? ir : undefined;
 }
 
-const EVIDENCE_PREFIX = "  evidence: ";
-const EVIDENCE_INDENT = " ".repeat(EVIDENCE_PREFIX.length);
-
-function clipContent(content: string, max = 80): string {
-  const flat = content.replaceAll(/\s+/g, " ").trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
-}
-
-function renderPattern(pattern: EventPattern): string {
-  return JSON.stringify(pattern);
-}
-
 /**
  * The readline presentation of the interview: single-letter answers, evidence
  * lines, prefillable edit prompts. Output is the CLI contract generate.test.ts
@@ -611,44 +797,6 @@ function renderPattern(pattern: EventPattern): string {
 export function createTextPresenter(
   deps: Pick<InterviewDeps, "ask" | "write">,
 ): InterviewPresenter {
-  async function askChoice(prompt: string, choices: string[]): Promise<string> {
-    for (;;) {
-      const answer = (await deps.ask(`${prompt} `)).trim().toLowerCase();
-      if (answer === "" && choices.length > 0) return choices[0]!;
-      if (choices.includes(answer)) return answer;
-      deps.write(`Please answer one of: ${choices.join(", ")}`);
-    }
-  }
-
-  function writeEvidence(entry: PatternEvidence): void {
-    if (entry.sample === undefined) {
-      deps.write(
-        entry.noMatchIsExpected
-          ? `${EVIDENCE_PREFIX}no sample event matches (expected — well-behaved samples should not exhibit a forbidden event)`
-          : `${EVIDENCE_PREFIX}no sample event matches`,
-      );
-      return;
-    }
-    const { trajectoryId, event, matcher } = entry.sample;
-    deps.write(`${EVIDENCE_PREFIX}${trajectoryId}/${event.id} (${event.actor} ${event.action})`);
-    // Show the event's values for the metadata keys the matcher binds to —
-    // the part of the matcher the action name alone can't confirm.
-    for (const key of Object.keys(matcher.metadata ?? {})) {
-      deps.write(
-        `${EVIDENCE_INDENT}metadata.${key}: ${JSON.stringify(event.metadata?.[key] ?? "")}`,
-      );
-    }
-    const content = clipContent(event.content);
-    if (content.length > 0) deps.write(`${EVIDENCE_INDENT}content: ${JSON.stringify(content)}`);
-  }
-
-  function writeUnobservedWarning(problems: string[]): void {
-    if (problems.length === 0) return;
-    deps.write(
-      `  warning: references ${problems.join(", ")} not observed in any sample trajectory — accept only if your agent's instrumentation emits it`,
-    );
-  }
-
   return {
     note: (note) => {
       deps.write(renderNote(note));
@@ -656,6 +804,7 @@ export function createTextPresenter(
 
     askName: async (step) => {
       const answer = await askChoice(
+        deps,
         `Meta-behavior "${step.name}" — [y] keep / [e] rename / [d] drop`,
         ["y", "e", "d"],
       );
@@ -667,17 +816,16 @@ export function createTextPresenter(
     },
 
     askTrigger: async (step) => {
-      deps.write(`\n## ${step.metaName}`);
       deps.write(`Trigger: ${step.trigger.description}`);
       if ("match" in step.trigger) {
         deps.write(`  match: ${renderPattern(step.trigger.match)}`);
-        if (step.evidence !== undefined) writeEvidence(step.evidence);
-        writeUnobservedWarning(step.unobserved);
-        const answer = await askChoice("[y] accept / [s] force semantic / [e] edit description", [
-          "y",
-          "s",
-          "e",
-        ]);
+        if (step.evidence !== undefined) writeEvidenceLines(deps, step.evidence);
+        writeUnobservedWarning(deps, step.unobserved);
+        const answer = await askChoice(
+          deps,
+          "[y] accept / [s] force semantic / [e] edit description",
+          ["y", "s", "e"],
+        );
         if (answer === "s") return { kind: "forceSemantic" };
         if (answer === "e") {
           return {
@@ -691,7 +839,7 @@ export function createTextPresenter(
       }
 
       deps.write("  (semantic trigger: judged by one scoped LLM call)");
-      const answer = await askChoice("[y] accept / [e] edit description", ["y", "e"]);
+      const answer = await askChoice(deps, "[y] accept / [e] edit description", ["y", "e"]);
       if (answer === "e") {
         return {
           kind: "edit",
@@ -707,13 +855,13 @@ export function createTextPresenter(
       deps.write(`Check (${step.check.type}): "${step.check.quote}"`);
       for (const entry of step.evidence) {
         deps.write(`  ${entry.role}: ${renderPattern(entry.pattern)}`);
-        writeEvidence(entry);
+        writeEvidenceLines(deps, entry);
       }
       if (step.check.type === "count" && step.check.distinctBy !== undefined) {
         deps.write(`  distinctBy: ${step.check.distinctBy}`);
       }
-      writeUnobservedWarning(step.unobserved);
-      const answer = await askChoice("[y] accept / [s] demote to semantic / [d] drop", [
+      writeUnobservedWarning(deps, step.unobserved);
+      const answer = await askChoice(deps, "[y] accept / [s] demote to semantic / [d] drop", [
         "y",
         "s",
         "d",
@@ -726,7 +874,7 @@ export function createTextPresenter(
     askSemanticCheck: async (step) => {
       deps.write(`Semantic check: "${step.check.quote}"`);
       deps.write(`  question: ${step.check.question}`);
-      const answer = await askChoice("[y] accept / [e] retype question / [d] drop", [
+      const answer = await askChoice(deps, "[y] accept / [e] retype question / [d] drop", [
         "y",
         "e",
         "d",
@@ -744,7 +892,7 @@ export function createTextPresenter(
     confirm: async (step) => {
       deps.write("\nGenerated judge IR:\n");
       deps.write(step.yaml);
-      const answer = await askChoice("Write this IR? [y] yes / [n] no", ["y", "n"]);
+      const answer = await askChoice(deps, "Write this IR? [y] yes / [n] no", ["y", "n"]);
       return answer === "y";
     },
   };

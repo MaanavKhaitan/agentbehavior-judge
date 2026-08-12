@@ -8,6 +8,7 @@ import { parseArgs as parseNodeArgs } from "node:util";
 
 import { applyNearestDotEnv } from "./env.js";
 import { runInterview } from "./generate.js";
+import { runUpdateInterview } from "./update.js";
 import { runWebInterview } from "./webInterview.js";
 import { completeWithBraintrustGateway, type JudgeCompletion } from "./gateway.js";
 import {
@@ -40,6 +41,7 @@ interface ParsedArgs {
   help: boolean;
   version: boolean;
   out: string | undefined;
+  update: string | undefined;
   model: string | undefined;
   noVerify: boolean;
   web: boolean;
@@ -54,6 +56,7 @@ function parseCliArgs(argv: string[]): ParsedArgs {
       json: { type: "boolean" },
       version: { type: "boolean", short: "v" },
       out: { type: "string" },
+      update: { type: "string" },
       model: { type: "string" },
       "no-verify": { type: "boolean" },
       web: { type: "boolean" },
@@ -67,6 +70,7 @@ function parseCliArgs(argv: string[]): ParsedArgs {
     help: values.help ?? false,
     version: values.version ?? false,
     out: values.out,
+    update: values.update,
     model: values.model,
     noVerify: values["no-verify"] ?? false,
     web: values.web ?? false,
@@ -77,17 +81,19 @@ function usage(): string {
   return `behavior-judge compiles Agent Behavior specs into judge IRs and runs them over trajectories.
 
 Usage:
-  behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>] [--model <m>] [--web]
+  behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--web]
   behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
   behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 
 generate interviews you through compiling a BEHAVIOR.md into a judge.yaml IR,
 binding deterministic checks to the event vocabulary observed in the sample
-trajectories. With --web the same interview runs in your browser on a
-local-only server (127.0.0.1, one-time token); the terminal prints the URL
-and still writes the file. judge runs an IR over trajectory JSON files.
-calibrate compares judge verdicts against expected verdicts recorded in the
-trajectory files.
+trajectories. With --update it diffs the spec against an existing IR instead:
+unchanged sections carry over without questions, and the interview covers only
+changed, added, and removed sections (--out defaults to the --update file).
+With --web the full interview runs in your browser on a local-only server
+(127.0.0.1, one-time token); the terminal prints the URL and still writes the
+file. judge runs an IR over trajectory JSON files. calibrate compares judge
+verdicts against expected verdicts recorded in the trajectory files.
 
 Trajectory JSON files contain a trajectory ({id, complete, events}), a
 {trajectory, expected} wrapper, or an array of either.
@@ -288,9 +294,15 @@ async function runGenerateCommand(args: ParsedArgs, deps: CliDeps): Promise<numb
         messages,
         args.model === undefined ? {} : { model: args.model },
       ));
-  const outPath = args.out ?? path.join(path.dirname(record.location), "judge.yaml");
+  const outPath = args.out ?? args.update ?? path.join(path.dirname(record.location), "judge.yaml");
 
   if (args.web) {
+    if (args.update !== undefined) {
+      process.stderr.write(
+        "error: --web does not support --update yet; run the update interview in the terminal.\n",
+      );
+      return 1;
+    }
     const ir = await runWebInterview({
       input: {
         behaviorName: record.name,
@@ -328,18 +340,27 @@ async function runGenerateCommand(args: ParsedArgs, deps: CliDeps): Promise<numb
     });
 
   try {
-    const ir = await runInterview(
-      {
-        behaviorName: record.name,
-        behaviorBody: record.body,
-        trajectories: cases.map((trajectoryCase) => trajectoryCase.trajectory),
-      },
-      {
-        complete,
-        ask,
-        write: (line) => process.stdout.write(`${line}\n`),
-      },
-    );
+    const trajectories = cases.map((trajectoryCase) => trajectoryCase.trajectory);
+    const interviewDeps = {
+      complete,
+      ask,
+      write: (line: string) => process.stdout.write(`${line}\n`),
+    };
+    const ir =
+      args.update === undefined
+        ? await runInterview(
+            { behaviorName: record.name, behaviorBody: record.body, trajectories },
+            interviewDeps,
+          )
+        : await runUpdateInterview(
+            {
+              behaviorName: record.name,
+              behaviorBody: record.body,
+              existing: await loadIrFile(args.update),
+              trajectories,
+            },
+            interviewDeps,
+          );
 
     if (ir === undefined) {
       process.stdout.write("Aborted; nothing written.\n");
