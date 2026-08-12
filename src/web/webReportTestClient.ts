@@ -1,5 +1,5 @@
 /**
- * Test-only client for the `judge --web` report server: reads the SSE
+ * Test-only client for the `judge` web report server: reads the SSE
  * snapshot stream and posts the ack the browser page would send once it has
  * rendered the final report. Used by webReport.test.ts and cli.test.ts; not
  * packed or exported.

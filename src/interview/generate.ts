@@ -246,7 +246,7 @@ export interface InterviewInput {
 // Structured interview steps and answers. The interview driver
 // (runProposalInterview) is presentation-agnostic: it walks the proposal and
 // asks an InterviewPresenter one step at a time. The readline CLI
-// (createTextPresenter) and the --web browser UI are two presenters over the
+// (createTextPresenter) and the browser UI are two presenters over the
 // same driver, so the demote/drop/edit rules cannot drift between them. The
 // exported per-item review helpers (reviewTrigger/reviewChecks/
 // reviewSemanticChecks) let update.ts drive the same review logic through

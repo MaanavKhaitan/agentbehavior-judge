@@ -1,5 +1,5 @@
 /**
- * Test-only client for the `generate --web` interview server (plain and
+ * Test-only client for the `generate` web interview server (plain and
  * `--update`): reads the SSE snapshot stream and posts answers, standing in
  * for the browser page. Used by webInterview.test.ts and cli.test.ts; not
  * packed or exported.

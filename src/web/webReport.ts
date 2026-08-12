@@ -6,7 +6,8 @@ import { REPORT_PAGE_HTML } from "./webReportPage.js";
 import { SnapshotSession, startWebServer } from "./webServer.js";
 
 /**
- * Browser presentation of the judge report (`judge --web`).
+ * Browser presentation of the judge report (the `judge` default;
+ * `--no-web`/`--json` pick the terminal).
  *
  * Judging stays in judge.ts; this module renders its results. The server
  * pushes `{revision, behavior, state}` snapshots over SSE exactly like the
