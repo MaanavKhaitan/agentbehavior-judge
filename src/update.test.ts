@@ -512,7 +512,7 @@ describe("runUpdateInterview", () => {
     expect(
       output.some((line) =>
         line.includes(
-          "Re-asking — the edit may affect this clause: the edit may redefine what counts as a primary source",
+          "Re-asking — this clause needs re-review: the edit may redefine what counts as a primary source",
         ),
       ),
     ).toBe(true);

@@ -11,7 +11,6 @@ import {
   type ConfirmStep,
   type EvidenceSample,
   type InterviewInput,
-  type InterviewPresenter,
   type NameAnswer,
   type NameStep,
   type PatternEvidence,
@@ -21,17 +20,31 @@ import {
   type TriggerStep,
 } from "./generate.js";
 import type { JudgeCompletion } from "./gateway.js";
-import type { JudgeIr } from "./ir.js";
+import type { JudgeIr, Trigger } from "./ir.js";
+import {
+  prepareUpdate,
+  renderUpdateNote,
+  runUpdateProposalInterview,
+  type CarriedBatchAnswer,
+  type CarriedBatchStep,
+  type CarriedClause,
+  type ChangedTriggerAnswer,
+  type ChangedTriggerStep,
+  type UpdateInput,
+  type UpdatePresenter,
+} from "./update.js";
 import { INTERVIEW_PAGE_HTML } from "./webInterviewPage.js";
 
 /**
- * Browser presentation of the generate interview (`generate --web`).
+ * Browser presentation of the generate and update interviews
+ * (`generate --web`, optionally with `--update`).
  *
- * The interview driver in generate.ts stays the single source of truth; this
- * module is one more InterviewPresenter: steps stream to the page over SSE,
- * answers come back as JSON posts. Back-navigation exploits the driver being
- * deterministic given (proposal, answers): pop the last recorded answer,
- * restart the driver, and replay the rest — the model is never re-asked.
+ * The interview drivers in generate.ts and update.ts stay the single source
+ * of truth; this module is one more presenter: steps stream to the page over
+ * SSE, answers come back as JSON posts. Back-navigation exploits the drivers
+ * being deterministic given (prepared LLM results, answers): pop the last
+ * recorded answer, restart the driver, and replay the rest — the model is
+ * never re-asked.
  *
  * The server binds 127.0.0.1 on a random port and every route requires the
  * one-time token embedded in the printed URL, so other local processes (or
@@ -52,11 +65,30 @@ export interface WebInterviewOptions {
   port?: number;
 }
 
-type AnyStep = NameStep | TriggerStep | CheckStep | SemanticCheckStep | ConfirmStep;
+/** `generate --web --update`: the same server around the update driver. */
+export interface WebUpdateInterviewOptions extends Omit<WebInterviewOptions, "input"> {
+  input: UpdateInput;
+}
+
+type AnyStep =
+  | NameStep
+  | TriggerStep
+  | CheckStep
+  | SemanticCheckStep
+  | ChangedTriggerStep
+  | CarriedBatchStep
+  | ConfirmStep;
 
 type ConfirmAnswer = { kind: "save" } | { kind: "cancel" };
 
-type StepAnswer = NameAnswer | TriggerAnswer | CheckAnswer | SemanticCheckAnswer | ConfirmAnswer;
+type StepAnswer =
+  | NameAnswer
+  | TriggerAnswer
+  | CheckAnswer
+  | SemanticCheckAnswer
+  | ChangedTriggerAnswer
+  | CarriedBatchAnswer
+  | ConfirmAnswer;
 
 type SessionState =
   | { type: "loading" }
@@ -110,9 +142,39 @@ function evidencePayload(entry: PatternEvidence): Record<string, unknown> {
 
 const SUMMARY_TEXT_MAX = 120;
 
-function confirmSummary(ir: JudgeIr): Array<Record<string, unknown>> {
+function triggerPayload(trigger: Trigger): Record<string, unknown> {
+  return {
+    description: trigger.description,
+    semantic: !("match" in trigger),
+    match: "match" in trigger ? trigger.match : null,
+  };
+}
+
+function carriedClausePayload(clause: CarriedClause): Record<string, unknown> {
+  if (clause.kind === "trigger") {
+    return { kind: "trigger", trigger: triggerPayload(clause.trigger) };
+  }
+  if (clause.kind === "check") {
+    return {
+      kind: "check",
+      type: clause.check.type,
+      quote: clip(clause.check.quote, SUMMARY_TEXT_MAX),
+    };
+  }
+  return {
+    kind: "semantic",
+    quote: clip(clause.check.quote, SUMMARY_TEXT_MAX),
+    question: clip(clause.check.question, SUMMARY_TEXT_MAX),
+  };
+}
+
+function confirmSummary(
+  ir: JudgeIr,
+  statuses?: Record<string, "unchanged" | "changed" | "added">,
+): Array<Record<string, unknown>> {
   return ir.metaBehaviors.map((meta) => ({
     name: meta.name,
+    status: statuses?.[meta.name] ?? null,
     semanticTrigger: !("match" in meta.trigger),
     triggerDescription: clip(meta.trigger.description, SUMMARY_TEXT_MAX),
     checkCount: meta.checks.length,
@@ -125,6 +187,23 @@ function confirmSummary(ir: JudgeIr): Array<Record<string, unknown>> {
       question: clip(check.question, SUMMARY_TEXT_MAX),
     })),
   }));
+}
+
+/** Change tallies for the update confirm card; null outside update mode. */
+function updatePayload(update: ConfirmStep["update"]): Record<string, unknown> | null {
+  if (update === undefined) return null;
+  const classifications = Object.values(update.statuses);
+  const count = (kind: "unchanged" | "changed" | "added") =>
+    classifications.filter((entry) => entry === kind).length;
+  const changed = count("changed");
+  const added = count("added");
+  return {
+    unchanged: count("unchanged"),
+    changed,
+    added,
+    removed: update.removed,
+    hasChanges: changed + added + update.removed.length > 0,
+  };
 }
 
 function stepPayload(step: AnyStep, outPath: string): Record<string, unknown> {
@@ -141,6 +220,7 @@ function stepPayload(step: AnyStep, outPath: string): Record<string, unknown> {
         evidence: step.evidence === undefined ? null : evidencePayload(step.evidence),
         unobserved: step.unobserved,
         position: step.position,
+        reAskReason: step.reAskReason ?? null,
       };
     case "check":
       return {
@@ -150,6 +230,7 @@ function stepPayload(step: AnyStep, outPath: string): Record<string, unknown> {
         evidence: step.evidence.map(evidencePayload),
         unobserved: step.unobserved,
         position: step.position,
+        reAskReason: step.reAskReason ?? null,
       };
     case "semanticCheck":
       return {
@@ -159,9 +240,33 @@ function stepPayload(step: AnyStep, outPath: string): Record<string, unknown> {
         question: step.check.question,
         demoted: step.demoted,
         position: step.position,
+        reAskReason: step.reAskReason ?? null,
+      };
+    case "changedTrigger":
+      return {
+        kind: "changedTrigger",
+        metaName: step.metaName,
+        previous: triggerPayload(step.previous),
+        proposed: triggerPayload(step.proposed),
+        evidence: step.evidence === undefined ? null : evidencePayload(step.evidence),
+        unobserved: step.unobserved,
+        position: step.position,
+      };
+    case "carriedBatch":
+      return {
+        kind: "carriedBatch",
+        metaName: step.metaName,
+        items: step.items.map(carriedClausePayload),
+        position: step.position,
       };
     case "confirm":
-      return { kind: "confirm", yaml: step.yaml, outPath, summary: confirmSummary(step.ir) };
+      return {
+        kind: "confirm",
+        yaml: step.yaml,
+        outPath,
+        summary: confirmSummary(step.ir, step.update?.statuses),
+        update: updatePayload(step.update),
+      };
   }
 }
 
@@ -204,6 +309,18 @@ function parseAnswer(step: AnyStep, raw: unknown): StepAnswer | undefined {
     }
     return undefined;
   }
+  if (step.kind === "changedTrigger") {
+    if (kind === "accept" || kind === "keepPrevious" || kind === "forceSemantic") return { kind };
+    if (kind === "edit") {
+      const description = textField(record.description);
+      return description === undefined ? undefined : { kind: "edit", description };
+    }
+    return undefined;
+  }
+  if (step.kind === "carriedBatch") {
+    if (kind === "keep" || kind === "review") return { kind };
+    return undefined;
+  }
   if (kind === "save" || kind === "cancel") return { kind };
   return undefined;
 }
@@ -215,6 +332,8 @@ class WebInterviewSession {
   private revision = 0;
   private state: SessionState = { type: "loading" };
   private readonly clients = new Set<ServerResponse>();
+  private noteIndex = 0;
+  private readonly loggedNotes: string[] = [];
 
   constructor(
     private readonly behavior: string,
@@ -222,21 +341,33 @@ class WebInterviewSession {
     private readonly log: (line: string) => void,
   ) {}
 
-  // The recorded answers are replayed positionally: the driver is
-  // deterministic given (proposal, answers), so answer N always lands on the
-  // same step N — which is what makes the per-method casts sound.
-  readonly presenter: InterviewPresenter = {
+  // The recorded answers are replayed positionally: the drivers are
+  // deterministic given (prepared results, answers), so answer N always lands
+  // on the same step N — which is what makes the per-method casts sound.
+  readonly presenter: UpdatePresenter = {
     note: (note) => {
       // Markdown-style rule headers are terminal presentation; the browser
       // shows the rule name on the card itself.
       if (note.kind === "metaHeader") return;
-      // Replayed runs re-emit earlier notes; only log at the live frontier.
-      if (this.cursor === this.recorded.length) this.log(renderNote(note));
+      // Replayed runs re-emit earlier notes; the driver being deterministic
+      // makes note N a function of the answers before it, so a note matching
+      // the one already logged at this ordinal is a replay, not news. A
+      // mismatch means the user answered differently after going back — log
+      // it and drop the now-stale history behind it.
+      const rendered = renderUpdateNote(note);
+      const index = this.noteIndex;
+      this.noteIndex += 1;
+      if (this.loggedNotes[index] === rendered) return;
+      this.loggedNotes.length = index;
+      this.loggedNotes.push(rendered);
+      this.log(rendered);
     },
     askName: (step) => this.present(step) as Promise<NameAnswer>,
     askTrigger: (step) => this.present(step) as Promise<TriggerAnswer>,
     askCheck: (step) => this.present(step) as Promise<CheckAnswer>,
     askSemanticCheck: (step) => this.present(step) as Promise<SemanticCheckAnswer>,
+    askChangedTrigger: (step) => this.present(step) as Promise<ChangedTriggerAnswer>,
+    askCarriedBatch: (step) => this.present(step) as Promise<CarriedBatchAnswer>,
     confirm: async (step) => {
       const answer = (await this.present(step)) as ConfirmAnswer;
       return answer.kind === "save";
@@ -247,6 +378,7 @@ class WebInterviewSession {
   beginRun(): void {
     this.cursor = 0;
     this.pending = undefined;
+    this.noteIndex = 0;
   }
 
   private present(step: AnyStep): Promise<StepAnswer> {
@@ -423,14 +555,29 @@ function handleRequest(
   res.writeHead(404, { "content-type": "text/plain" }).end("Not found");
 }
 
+interface ServeOptions<Prepared> {
+  behaviorName: string;
+  outPath: string;
+  writeIr: (ir: JudgeIr) => Promise<string>;
+  log: (line: string) => void;
+  openBrowser: ((url: string) => void) | undefined;
+  port: number | undefined;
+  /** The LLM phase: runs once while the page shows the loading screen. */
+  prepare: () => Promise<Prepared>;
+  /** The deterministic phase: restarted from scratch on every back-navigation. */
+  drive: (prepared: Prepared, presenter: UpdatePresenter) => Promise<JudgeIr | undefined>;
+}
+
 /**
- * Serve the interview to a browser and resolve with the confirmed IR
+ * Serve an interview to a browser and resolve with the confirmed IR
  * (undefined when the user cancels). `writeIr` runs before the success screen
  * is shown, so the page never claims a file exists that was not written.
  */
-export async function runWebInterview(options: WebInterviewOptions): Promise<JudgeIr | undefined> {
+async function serveInterview<Prepared>(
+  options: ServeOptions<Prepared>,
+): Promise<JudgeIr | undefined> {
   const token = randomBytes(16).toString("hex");
-  const session = new WebInterviewSession(options.input.behaviorName, options.outPath, options.log);
+  const session = new WebInterviewSession(options.behaviorName, options.outPath, options.log);
   const server = createServer((req, res) => {
     handleRequest(req, res, token, session);
   });
@@ -448,17 +595,11 @@ export async function runWebInterview(options: WebInterviewOptions): Promise<Jud
   options.openBrowser?.(url);
 
   try {
-    const prepared = await prepareInterview(options.input, options.complete, (note) => {
-      options.log(renderNote(note));
-    });
+    const prepared = await options.prepare();
     for (;;) {
       session.beginRun();
       try {
-        const ir = await runProposalInterview(
-          prepared.proposal,
-          prepared.context,
-          session.presenter,
-        );
+        const ir = await options.drive(prepared, session.presenter);
         if (ir === undefined) {
           session.finish(null);
           return undefined;
@@ -484,4 +625,41 @@ export async function runWebInterview(options: WebInterviewOptions): Promise<Jud
       server.closeAllConnections();
     });
   }
+}
+
+/** Serve the generate interview (`generate --web`) to a browser. */
+export async function runWebInterview(options: WebInterviewOptions): Promise<JudgeIr | undefined> {
+  return serveInterview({
+    behaviorName: options.input.behaviorName,
+    outPath: options.outPath,
+    writeIr: options.writeIr,
+    log: options.log,
+    openBrowser: options.openBrowser,
+    port: options.port,
+    prepare: () =>
+      prepareInterview(options.input, options.complete, (note) => {
+        options.log(renderNote(note));
+      }),
+    drive: (prepared, presenter) =>
+      runProposalInterview(prepared.proposal, prepared.context, presenter),
+  });
+}
+
+/** Serve the diff-scoped update interview (`generate --web --update`) to a browser. */
+export async function runWebUpdateInterview(
+  options: WebUpdateInterviewOptions,
+): Promise<JudgeIr | undefined> {
+  return serveInterview({
+    behaviorName: options.input.behaviorName,
+    outPath: options.outPath,
+    writeIr: options.writeIr,
+    log: options.log,
+    openBrowser: options.openBrowser,
+    port: options.port,
+    prepare: () =>
+      prepareUpdate(options.input, options.complete, (note) => {
+        options.log(renderUpdateNote(note));
+      }),
+    drive: (prepared, presenter) => runUpdateProposalInterview(prepared, presenter),
+  });
 }

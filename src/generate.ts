@@ -247,9 +247,9 @@ export interface InterviewInput {
 // asks an InterviewPresenter one step at a time. The readline CLI
 // (createTextPresenter) and the --web browser UI are two presenters over the
 // same driver, so the demote/drop/edit rules cannot drift between them. The
-// deps-based helpers exported below (interviewTrigger/interviewChecks/
-// interviewSemanticChecks, reused by update.ts) drive the same review logic
-// through a one-off text presenter.
+// exported per-item review helpers (reviewTrigger/reviewChecks/
+// reviewSemanticChecks) let update.ts drive the same review logic through
+// whichever presenter it was given.
 // ---------------------------------------------------------------------------
 
 /** Which slot of a check a pattern occupies, for labeling evidence. */
@@ -293,6 +293,8 @@ export interface TriggerStep {
   evidence?: PatternEvidence;
   unobserved: string[];
   position: StepPosition;
+  /** Set by the update flow when triage flagged a carried clause for re-review. */
+  reAskReason?: string;
 }
 
 export interface CheckStep {
@@ -303,6 +305,8 @@ export interface CheckStep {
   evidence: PatternEvidence[];
   unobserved: string[];
   position: StepPosition;
+  /** Set by the update flow when triage flagged a carried clause for re-review. */
+  reAskReason?: string;
 }
 
 export interface SemanticCheckStep {
@@ -312,12 +316,21 @@ export interface SemanticCheckStep {
   /** True when the check was demoted from a predicate earlier in the interview. */
   demoted: boolean;
   position: StepPosition;
+  /** Set by the update flow when triage flagged a carried clause for re-review. */
+  reAskReason?: string;
 }
 
 export interface ConfirmStep {
   kind: "confirm";
   ir: JudgeIr;
   yaml: string;
+  /** Update mode only: how the plan classified each section, for the summary. */
+  update?: {
+    /** Section heading (= meta name) → plan classification. */
+    statuses: Record<string, "unchanged" | "changed" | "added">;
+    /** Meta-behaviors dropped because their sections left the spec. */
+    removed: string[];
+  };
 }
 
 export type NameAnswer = { kind: "keep" } | { kind: "rename"; name: string } | { kind: "drop" };
@@ -440,7 +453,7 @@ function firstMatch(
   return undefined;
 }
 
-function patternEvidence(
+export function patternEvidence(
   trajectories: AgentTrajectory[],
   role: PatternRole,
   pattern: EventPattern,
@@ -491,7 +504,10 @@ export function renderPattern(pattern: EventPattern): string {
   return JSON.stringify(pattern);
 }
 
-function writeEvidenceLines(deps: Pick<InterviewDeps, "write">, entry: PatternEvidence): void {
+export function writeEvidenceLines(
+  deps: Pick<InterviewDeps, "write">,
+  entry: PatternEvidence,
+): void {
   if (entry.sample === undefined) {
     deps.write(
       entry.noMatchIsExpected
@@ -509,18 +525,6 @@ function writeEvidenceLines(deps: Pick<InterviewDeps, "write">, entry: PatternEv
   }
   const content = clipContent(event.content);
   if (content.length > 0) deps.write(`${EVIDENCE_INDENT}content: ${JSON.stringify(content)}`);
-}
-
-export function writeEvidence(
-  deps: Pick<InterviewDeps, "write">,
-  trajectories: AgentTrajectory[],
-  pattern: EventPattern,
-  opts?: { noMatchIsExpected?: boolean },
-): void {
-  writeEvidenceLines(
-    deps,
-    patternEvidence(trajectories, "match", pattern, opts?.noMatchIsExpected ?? false),
-  );
 }
 
 export function writeUnobservedWarning(
@@ -549,16 +553,17 @@ export async function askChoice(
 // ---------------------------------------------------------------------------
 // Per-item review: build the structured step, ask the presenter, apply the
 // answer. Used by the full-interview driver with real positions, and by the
-// exported deps-based helpers below with a one-off text presenter.
+// update driver (update.ts) for delta and re-ask questions.
 // ---------------------------------------------------------------------------
 
-async function reviewTrigger(
+export async function reviewTrigger(
   trigger: Trigger,
   trajectories: AgentTrajectory[],
   sets: VocabularySets,
   presenter: InterviewPresenter,
   metaName: string,
   position: StepPosition,
+  reAskReason?: string,
 ): Promise<Trigger> {
   const step: TriggerStep = {
     kind: "trigger",
@@ -569,6 +574,7 @@ async function reviewTrigger(
     ...("match" in trigger
       ? { evidence: patternEvidence(trajectories, "match", trigger.match) }
       : {}),
+    ...(reAskReason === undefined ? {} : { reAskReason }),
   };
   const answer = await presenter.askTrigger(step);
 
@@ -592,13 +598,14 @@ async function reviewTrigger(
   return trigger;
 }
 
-async function reviewChecks(
+export async function reviewChecks(
   proposedChecks: PredicateCheck[],
   trajectories: AgentTrajectory[],
   sets: VocabularySets,
   presenter: InterviewPresenter,
   metaName: string,
   position: StepPosition,
+  reAskReason?: string,
 ): Promise<{ checks: PredicateCheck[]; demoted: SemanticCheck[] }> {
   const checks: PredicateCheck[] = [];
   const demoted: SemanticCheck[] = [];
@@ -610,6 +617,7 @@ async function reviewChecks(
       evidence: checkEvidence(check, trajectories),
       unobserved: unobservedInCheck(check, sets),
       position: { ...position, itemIndex: index, itemCount: proposedChecks.length },
+      ...(reAskReason === undefined ? {} : { reAskReason }),
     });
     if (answer.kind === "accept") checks.push(check);
     if (answer.kind === "demote") {
@@ -622,11 +630,12 @@ async function reviewChecks(
   return { checks, demoted };
 }
 
-async function reviewSemanticChecks(
+export async function reviewSemanticChecks(
   candidates: Array<{ check: SemanticCheck; demoted: boolean }>,
   presenter: InterviewPresenter,
   metaName: string,
   position: StepPosition,
+  reAskReason?: string,
 ): Promise<SemanticCheck[]> {
   const kept: SemanticCheck[] = [];
   for (const [index, candidate] of candidates.entries()) {
@@ -636,6 +645,7 @@ async function reviewSemanticChecks(
       check: candidate.check,
       demoted: candidate.demoted,
       position: { ...position, itemIndex: index, itemCount: candidates.length },
+      ...(reAskReason === undefined ? {} : { reAskReason }),
     });
     if (answer.kind === "drop") continue;
     if (answer.kind === "edit") {
@@ -650,55 +660,6 @@ async function reviewSemanticChecks(
     }
   }
   return kept;
-}
-
-const STANDALONE_POSITION: StepPosition = { metaIndex: 0, metaCount: 1 };
-
-/** Deps-based per-trigger review (readline rendering); update.ts reuses it. */
-export async function interviewTrigger(
-  trigger: Trigger,
-  trajectories: AgentTrajectory[],
-  sets: VocabularySets,
-  deps: InterviewDeps,
-): Promise<Trigger> {
-  return reviewTrigger(
-    trigger,
-    trajectories,
-    sets,
-    createTextPresenter(deps),
-    "",
-    STANDALONE_POSITION,
-  );
-}
-
-/** Deps-based per-check review (readline rendering); update.ts reuses it. */
-export async function interviewChecks(
-  proposedChecks: PredicateCheck[],
-  trajectories: AgentTrajectory[],
-  sets: VocabularySets,
-  deps: InterviewDeps,
-): Promise<{ checks: PredicateCheck[]; demoted: SemanticCheck[] }> {
-  return reviewChecks(
-    proposedChecks,
-    trajectories,
-    sets,
-    createTextPresenter(deps),
-    "",
-    STANDALONE_POSITION,
-  );
-}
-
-/** Deps-based semantic-check review (readline rendering); update.ts reuses it. */
-export async function interviewSemanticChecks(
-  semanticChecks: SemanticCheck[],
-  deps: InterviewDeps,
-): Promise<SemanticCheck[]> {
-  return reviewSemanticChecks(
-    semanticChecks.map((check) => ({ check, demoted: false })),
-    createTextPresenter(deps),
-    "",
-    STANDALONE_POSITION,
-  );
 }
 
 async function namePhase(
