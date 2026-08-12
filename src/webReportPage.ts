@@ -632,6 +632,9 @@ function runCard(judgment) {
 function updateStats(state) {
   var stats = document.getElementById('stats');
   stats.textContent = '';
+  // An error snapshot carries no judgments; an empty stats line beats a
+  // "0 runs judged" that contradicts the run cards still rendered above.
+  if (state.type === 'error') return;
   var judgments = state.judgments || [];
   if (state.type === 'judging') {
     stats.appendChild(el('span', 'stat-total', 'Judging run ' + (state.done + 1) + ' of ' + state.total + '\\u2026'));
