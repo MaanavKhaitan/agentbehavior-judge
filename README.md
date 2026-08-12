@@ -163,7 +163,7 @@ meta agreement 12/12, file agreement 6/6
 
 Two further examples cover the remaining predicate types and need no LLM at all to reach
 their expected verdicts (their triggers and checks are all deterministic;
-`src/examples.test.ts` re-derives every checked-in verdict offline in CI):
+`src/core/examples.test.ts` re-derives every checked-in verdict offline in CI):
 
 - [`examples/verified-refund-support/`](examples/verified-refund-support/) — a
   customer-support refund agent: `ordering` (passed identity verification before any

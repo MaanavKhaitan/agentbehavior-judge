@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { serializeIr, type JudgeIr, type MetaBehaviorIr } from "./ir.js";
-import { taxCase } from "./taxFixtures.js";
+import { serializeIr, type JudgeIr, type MetaBehaviorIr } from "../core/ir.js";
+import { taxCase } from "../core/taxFixtures.js";
 import { runWebInterview, runWebUpdateInterview } from "./webInterview.js";
 import { driveConnected, driveInterview, InterviewClient } from "./webInterviewTestClient.js";
 
