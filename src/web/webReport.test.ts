@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseIr } from "./ir.js";
-import { judgeTrajectory } from "./judge.js";
-import { taxCase } from "./taxFixtures.js";
-import type { TrajectoryCase } from "./trajectory.js";
+import { parseIr } from "../core/ir.js";
+import { judgeTrajectory } from "../core/judge.js";
+import { taxCase } from "../core/taxFixtures.js";
+import type { TrajectoryCase } from "../core/trajectory.js";
 import { runWebReport, type WebReportOptions } from "./webReport.js";
 import { ReportClient, watchReport, type ReportSnapshot } from "./webReportTestClient.js";
 

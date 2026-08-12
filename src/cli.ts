@@ -7,21 +7,21 @@ import { pathToFileURL } from "node:url";
 import { parseArgs as parseNodeArgs } from "node:util";
 
 import { applyNearestDotEnv } from "./env.js";
-import { runInterview } from "./generate.js";
-import { runUpdateInterview } from "./update.js";
-import { runWebInterview, runWebUpdateInterview } from "./webInterview.js";
-import { runWebReport } from "./webReport.js";
-import { completeWithBraintrustGateway, type JudgeCompletion } from "./gateway.js";
+import { runInterview } from "./interview/generate.js";
+import { runUpdateInterview } from "./interview/update.js";
+import { runWebInterview, runWebUpdateInterview } from "./web/webInterview.js";
+import { runWebReport } from "./web/webReport.js";
+import { completeWithBraintrustGateway, type JudgeCompletion } from "./core/gateway.js";
 import {
   compareToExpected,
   judgeTrajectory,
   type ClauseResult,
   type JudgmentComparison,
   type TrajectoryJudgment,
-} from "./judge.js";
-import { parseIr, serializeIr, type JudgeIr } from "./ir.js";
-import { loadBehaviorSpec, type BehaviorSpec } from "./spec.js";
-import { loadTrajectoryFile, type TrajectoryCase } from "./trajectory.js";
+} from "./core/judge.js";
+import { parseIr, serializeIr, type JudgeIr } from "./core/ir.js";
+import { loadBehaviorSpec, type BehaviorSpec } from "./core/spec.js";
+import { loadTrajectoryFile, type TrajectoryCase } from "./core/trajectory.js";
 
 export interface CliDeps {
   complete?: JudgeCompletion;

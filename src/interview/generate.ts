@@ -1,6 +1,6 @@
 import { stringify as stringifyYaml } from "yaml";
 
-import { completeJsonWithRetry, parseJsonObject, type JudgeCompletion } from "./gateway.js";
+import { completeJsonWithRetry, parseJsonObject, type JudgeCompletion } from "../core/gateway.js";
 import {
   parseIr,
   serializeIr,
@@ -11,10 +11,10 @@ import {
   type PredicateCheck,
   type SemanticCheck,
   type Trigger,
-} from "./ir.js";
-import { matchesAny, matchesEvent } from "./predicates.js";
-import { clip } from "./text.js";
-import type { AgentTrajectory, TrajectoryEvent } from "./trajectory.js";
+} from "../core/ir.js";
+import { matchesAny, matchesEvent } from "../core/predicates.js";
+import { clip } from "../core/text.js";
+import type { AgentTrajectory, TrajectoryEvent } from "../core/trajectory.js";
 
 export interface ActionVocabulary {
   action: string;

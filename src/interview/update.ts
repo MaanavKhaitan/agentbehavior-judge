@@ -34,7 +34,7 @@ import {
   requireNonEmptyString,
   type GatewayMessage,
   type JudgeCompletion,
-} from "./gateway.js";
+} from "../core/gateway.js";
 import {
   serializeIr,
   type JudgeIr,
@@ -42,9 +42,9 @@ import {
   type PredicateCheck,
   type SemanticCheck,
   type Trigger,
-} from "./ir.js";
-import { flattenWhitespace } from "./text.js";
-import type { AgentTrajectory } from "./trajectory.js";
+} from "../core/ir.js";
+import { flattenWhitespace } from "../core/text.js";
+import type { AgentTrajectory } from "../core/trajectory.js";
 
 // ---------------------------------------------------------------------------
 // Update plan: map existing meta-behaviors onto the edited spec's sections.

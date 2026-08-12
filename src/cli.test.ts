@@ -5,11 +5,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { main, type CliDeps } from "./cli.js";
-import { parseIr } from "./ir.js";
-import type { TrajectoryJudgment } from "./judge.js";
-import { taxCase } from "./taxFixtures.js";
-import { driveInterview, type InterviewSnapshot } from "./webInterviewTestClient.js";
-import { watchReport, type ReportSnapshot } from "./webReportTestClient.js";
+import { parseIr } from "./core/ir.js";
+import type { TrajectoryJudgment } from "./core/judge.js";
+import { taxCase } from "./core/taxFixtures.js";
+import { driveInterview, type InterviewSnapshot } from "./web/webInterviewTestClient.js";
+import { watchReport, type ReportSnapshot } from "./web/webReportTestClient.js";
 
 let temporaryDirectories: string[] = [];
 

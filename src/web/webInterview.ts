@@ -14,10 +14,10 @@ import {
   type SemanticCheckStep,
   type TriggerAnswer,
   type TriggerStep,
-} from "./generate.js";
-import type { JudgeCompletion } from "./gateway.js";
-import type { JudgeIr, Trigger } from "./ir.js";
-import { clip } from "./text.js";
+} from "../interview/generate.js";
+import type { JudgeCompletion } from "../core/gateway.js";
+import type { JudgeIr, Trigger } from "../core/ir.js";
+import { clip } from "../core/text.js";
 import {
   prepareUpdate,
   renderUpdateNote,
@@ -29,7 +29,7 @@ import {
   type ChangedTriggerStep,
   type UpdateInput,
   type UpdatePresenter,
-} from "./update.js";
+} from "../interview/update.js";
 import { INTERVIEW_PAGE_HTML } from "./webInterviewPage.js";
 import { SnapshotSession, startWebServer } from "./webServer.js";
 

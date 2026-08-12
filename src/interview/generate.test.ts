@@ -10,7 +10,7 @@ import {
   vocabularySets,
   type InterviewDeps,
 } from "./generate.js";
-import { taxCase } from "./taxFixtures.js";
+import { taxCase } from "../core/taxFixtures.js";
 
 const behaviorBody = `# Primary-source tax research
 
