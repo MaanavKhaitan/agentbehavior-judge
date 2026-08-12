@@ -1,11 +1,11 @@
 {
-  "name": "agentbehavior-judge",
+  "name": "behavior-judge",
   "version": "0.1.0",
   "description": "Compile Agent Behavior specs into checked-in judge IRs and run them over trajectories.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MaanavKhaitan/agentbehavior-judge.git"
+    "url": "git+https://github.com/MaanavKhaitan/behavior-judge.git"
   },
   "bin": {
     "behavior-judge": "./dist/cli.mjs"
