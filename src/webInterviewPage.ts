@@ -1,5 +1,6 @@
 /**
- * The single-file page served by the web interview server (`generate --web`).
+ * The single-file page served by the web interview server (`generate --web`,
+ * with or without `--update`).
  *
  * All interview state arrives over SSE (`GET /events`) and answers go back as
  * JSON (`POST /answer`, `POST /back`); the page holds no knowledge of
@@ -209,6 +210,8 @@ export const INTERVIEW_PAGE_HTML = `<!doctype html>
   .zone .quote { margin-top: 0; background: transparent; border-radius: 0; }
   .zone .badges + .quote { margin-top: 12px; }
   .zone .edit-area { margin-top: 0; }
+  .zone .section-label:first-child { margin-top: 0; }
+  .zone + .zone { margin-top: 14px; }
 
   .quote {
     margin: 18px 0 0;
@@ -475,6 +478,20 @@ export const INTERVIEW_PAGE_HTML = `<!doctype html>
     color: var(--green-ink);
   }
   .summary-pill.violet { background: var(--violet-bg); border-color: var(--violet-line); color: var(--violet-ink); }
+  .summary-pill.amber { background: var(--amber-bg); border-color: var(--amber-line); color: var(--amber-ink); }
+  .summary-pill.slate { background: var(--slate-bg); border-color: var(--slate-line); color: var(--slate-ink); }
+  .all-clear {
+    margin-top: 16px;
+    background: var(--green-bg);
+    border: 1px solid var(--green-line);
+    border-radius: 14px;
+    padding: 12px 16px;
+    color: var(--green-ink);
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  .all-clear b { font-weight: 700; }
+  .removed-line { margin: 14px 0 0; font-size: 13px; color: var(--red-ink); }
   .rule-detail {
     border-top: 1px solid var(--line-soft);
     padding: 11px 16px 13px;
@@ -496,6 +513,12 @@ export const INTERVIEW_PAGE_HTML = `<!doctype html>
   .mini-tag.green { background: var(--green-bg); border-color: var(--green-line); color: var(--green-ink); }
   .mini-tag.violet { background: var(--violet-bg); border-color: var(--violet-line); color: var(--violet-ink); }
   .rule-line-text { color: var(--muted); line-height: 1.45; }
+  .carried-list {
+    margin-top: 18px;
+    border: 1px solid var(--line);
+    border-top: 1px solid var(--line);
+    border-radius: 14px;
+  }
 
   details.yaml { margin-top: 18px; }
   details.yaml summary {
@@ -748,7 +771,7 @@ function checkDiagram(check) {
 
 var CHECK_BADGE = {
   ordering: { label: 'Order matters', cls: '' },
-  pairing: { label: 'Needs a follow-up', cls: '' },
+  pairing: { label: 'Must be paired', cls: '' },
   required: { label: 'Must happen', cls: '' },
   forbidden: { label: 'Never allowed', cls: ' badge-red' },
   count: { label: 'Count limit', cls: '' },
@@ -756,7 +779,7 @@ var CHECK_BADGE = {
 
 // ---------- evidence ----------
 
-var ROLE_LABEL = { first: 'First', before: 'Then', each: 'Each', followedBy: 'Follow-up', match: 'Event', after: 'After' };
+var ROLE_LABEL = { first: 'First', before: 'Then', each: 'Each', followedBy: 'Then', match: 'Event', after: 'After' };
 
 function evidencePanel(entries) {
   var panel = el('div', 'evidence');
@@ -815,12 +838,29 @@ function warningBox(unobserved) {
 
 function kickerText(step) {
   if (step.kind === 'name') return 'Name your rules \\u00B7 ' + (step.index + 1) + ' of ' + step.count;
-  if (step.kind === 'confirm') return 'Final step \\u00B7 Review and save';
+  if (step.kind === 'confirm') {
+    return step.update && !step.update.hasChanges
+      ? 'Final step \\u00B7 Nothing changed'
+      : 'Final step \\u00B7 Review and save';
+  }
   var p = step.position;
   var where = 'Rule ' + (p.metaIndex + 1) + ' of ' + p.metaCount;
   if (step.kind === 'trigger') return where;
+  if (step.kind === 'changedTrigger') return where + ' \\u00B7 Trigger changed';
+  if (step.kind === 'carriedBatch') return where + ' \\u00B7 Carried clauses';
   if (step.kind === 'check') return where + ' \\u00B7 Check ' + (p.itemIndex + 1) + ' of ' + p.itemCount;
   return where + ' \\u00B7 Semantic check ' + (p.itemIndex + 1) + ' of ' + p.itemCount;
+}
+
+// Amber callout on a card the update flow re-asks after a spec edit.
+function reAskBox(reason) {
+  if (!reason) return null;
+  var box = el('div', 'warn');
+  var title = el('div', 'warn-title');
+  title.appendChild(el('b', null, 'This clause needs re-review after your spec edit. '));
+  title.appendChild(document.createTextNode(reason));
+  box.appendChild(title);
+  return box;
 }
 
 function actionButton(label, kind, onClick) {
@@ -916,6 +956,8 @@ function triggerCard(state) {
   card.appendChild(el('div', 'step-kicker', kickerText(step)));
   card.appendChild(el('h2', null, step.metaName));
   card.appendChild(ruleRail('trigger'));
+  var reAsk = reAskBox(step.reAskReason);
+  if (reAsk) card.appendChild(reAsk);
 
   var zone = el('div', 'zone zone-trigger');
   var lead = el('p', 'lead editable-view', description);
@@ -955,6 +997,8 @@ function checkCard(state) {
   card.appendChild(el('div', 'section-label label-tight', 'From your spec'));
   card.appendChild(el('h2', 'h2-quote', '\\u201C' + check.quote + '\\u201D'));
   card.appendChild(ruleRail('checks'));
+  var reAsk = reAskBox(step.reAskReason);
+  if (reAsk) card.appendChild(reAsk);
 
   var zone = el('div', 'zone zone-check');
   var badge = CHECK_BADGE[check.type] || { label: check.type, cls: '' };
@@ -985,6 +1029,8 @@ function semanticCard(state) {
   var title = el('h2', null, question);
   card.appendChild(title);
   card.appendChild(ruleRail('checks'));
+  var reAsk = reAskBox(step.reAskReason);
+  if (reAsk) card.appendChild(reAsk);
 
   var zone = el('div', 'zone zone-semantic');
   if (step.demoted) {
@@ -1007,12 +1053,131 @@ function semanticCard(state) {
   return card;
 }
 
-function confirmCard(state) {
+// Update flow: the spec edit changed the trigger; previous vs proposed.
+function changedTriggerCard(state) {
+  var step = state.step;
+  var description = pendingEdit != null ? pendingEdit : step.proposed.description;
+  var card = el('article', 'card');
+  card.appendChild(el('div', 'step-kicker', kickerText(step)));
+  card.appendChild(el('h2', null, step.metaName));
+  card.appendChild(el('p', 'lead', 'Your spec edit changed when this rule applies. Keep the proposed trigger, or stay with the one you approved before?'));
+
+  var prevZone = el('div', 'zone');
+  prevZone.appendChild(el('div', 'section-label', 'Previous trigger'));
+  prevZone.appendChild(el('p', 'lead', step.previous.description));
+  if (step.previous.semantic) {
+    prevZone.appendChild(el('p', 'hint-line', 'Semantic: the judge model decides whether the rule applies.'));
+  } else {
+    prevZone.appendChild(el('div', 'section-label', 'Fires on'));
+    prevZone.appendChild(patternGroup(step.previous.match, 'plain'));
+  }
+  card.appendChild(prevZone);
+
+  var zone = el('div', 'zone zone-trigger');
+  zone.appendChild(el('div', 'section-label', 'Proposed trigger'));
+  var lead = el('p', 'lead editable-view', description);
+  zone.appendChild(lead);
+  if (step.proposed.semantic) {
+    zone.appendChild(el('p', 'hint-line', 'No event pattern can detect this reliably, so the judge model reads each run and decides whether the rule applies.'));
+  } else {
+    zone.appendChild(el('div', 'section-label', 'Fires on'));
+    zone.appendChild(patternGroup(step.proposed.match, 'green'));
+    if (step.evidence) zone.appendChild(evidencePanel([step.evidence]));
+  }
+  card.appendChild(zone);
+
+  var warn = warningBox(step.unobserved);
+  if (warn) card.appendChild(warn);
+
+  var buttons = [
+    actionButton('Keep proposed trigger', 'primary', function () {
+      send(pendingEdit != null ? { kind: 'edit', description: pendingEdit } : { kind: 'accept' });
+    }),
+    actionButton('Keep previous trigger', '', function () { send({ kind: 'keepPrevious' }); }),
+  ];
+  if (!step.proposed.semantic) {
+    buttons.push(actionButton('Move to semantic trigger', '', function () { send({ kind: 'forceSemantic' }); }));
+  }
+  buttons.push(actionButton('Edit description', '', function () {
+    enterEdit(card, { slot: lead, value: description, saveLabel: 'Save description' });
+  }));
+  card.appendChild(el('div', 'actions', buttons));
+  return card;
+}
+
+// Update flow: clauses whose spec sentences survived the edit unchanged.
+function carriedBatchCard(state) {
   var step = state.step;
   var card = el('article', 'card');
   card.appendChild(el('div', 'step-kicker', kickerText(step)));
-  card.appendChild(el('h2', null, 'Review and save your judge'));
-  card.appendChild(el('p', 'lead', 'Every rule below is bound to the event vocabulary from your sample runs. Expand a rule to see exactly what it checks.'));
+  card.appendChild(el('h2', null, step.metaName));
+  card.appendChild(el('p', 'lead', step.items.length === 1
+    ? 'Your spec edit didn\\u2019t change this clause. It can stay exactly as you approved it.'
+    : 'Your spec edit didn\\u2019t change these clauses. They can stay exactly as you approved them.'));
+
+  var list = el('div', 'rule-detail carried-list');
+  step.items.forEach(function (item) {
+    if (item.kind === 'trigger') {
+      list.appendChild(el('div', 'rule-line', [
+        el('span', 'mini-tag green', item.trigger.semantic ? 'semantic trigger' : 'trigger'),
+        el('span', 'rule-line-text', item.trigger.description),
+      ]));
+    } else if (item.kind === 'check') {
+      list.appendChild(el('div', 'rule-line', [
+        el('span', 'mini-tag', item.type),
+        el('span', 'rule-line-text', '\\u201C' + item.quote + '\\u201D'),
+      ]));
+    } else {
+      list.appendChild(el('div', 'rule-line', [
+        el('span', 'mini-tag violet', 'semantic'),
+        el('span', 'rule-line-text', item.question),
+      ]));
+    }
+  });
+  card.appendChild(list);
+
+  card.appendChild(el('div', 'actions', [
+    actionButton(step.items.length === 1 ? 'Keep this clause' : 'Keep all ' + step.items.length, 'primary', function () { send({ kind: 'keep' }); }),
+    actionButton('Review individually', '', function () { send({ kind: 'review' }); }),
+  ]));
+  return card;
+}
+
+var STATUS_PILL = {
+  unchanged: { label: 'unchanged', cls: ' slate' },
+  changed: { label: 'updated', cls: ' amber' },
+  added: { label: 'new', cls: '' },
+};
+
+function updateLead(update) {
+  var parts = [];
+  if (update.changed > 0) parts.push(update.changed + ' updated');
+  if (update.added > 0) parts.push(update.added + ' new');
+  if (update.removed.length > 0) parts.push(update.removed.length + ' removed');
+  parts.push(update.unchanged + ' unchanged');
+  return 'What your spec edit did to your rules: ' + parts.join(' \\u00B7 ') + '. Expand a rule to see exactly what it checks.';
+}
+
+function confirmCard(state) {
+  var step = state.step;
+  var update = step.update;
+  var noChanges = update && !update.hasChanges;
+  var card = el('article', 'card');
+  card.appendChild(el('div', 'step-kicker', kickerText(step)));
+  card.appendChild(el('h2', null, noChanges ? 'Your judge is already up to date' : 'Review and save your judge'));
+
+  if (noChanges) {
+    var clear = el('div', 'all-clear');
+    clear.appendChild(el('b', null, 'Nothing to re-review. '));
+    clear.appendChild(document.createTextNode(
+      'All ' + update.unchanged + ' spec sections still match the judge you already approved, so there were no questions to ask. Saving keeps the rules exactly as they are.'
+    ));
+    card.appendChild(clear);
+  } else if (update) {
+    card.appendChild(el('p', 'lead', updateLead(update)));
+  } else {
+    card.appendChild(el('p', 'lead', 'Every rule below is bound to the event vocabulary from your sample runs. Expand a rule to see exactly what it checks.'));
+  }
 
   var list = el('div', 'summary-list');
   step.summary.forEach(function (meta, index) {
@@ -1021,6 +1186,10 @@ function confirmCard(state) {
     var head = el('summary', null);
     head.appendChild(el('div', 'summary-name', meta.name));
     var sub = el('div', 'summary-sub');
+    if (meta.status && STATUS_PILL[meta.status]) {
+      var status = STATUS_PILL[meta.status];
+      sub.appendChild(el('span', 'summary-pill' + status.cls, status.label));
+    }
     if (meta.checkCount > 0) {
       sub.appendChild(el('span', 'summary-pill', meta.checkCount + ' deterministic'));
     }
@@ -1051,6 +1220,15 @@ function confirmCard(state) {
     list.appendChild(row);
   });
   card.appendChild(list);
+
+  if (update && update.removed.length > 0) {
+    var removedLine = el('p', 'removed-line');
+    removedLine.appendChild(el('b', null, 'Removed: '));
+    removedLine.appendChild(document.createTextNode(
+      update.removed.join(', ') + ' \\u2014 their sections no longer appear in the spec.'
+    ));
+    card.appendChild(removedLine);
+  }
 
   var details = el('details', 'yaml');
   details.appendChild(el('summary', null, 'View the raw judge.yaml'));
@@ -1104,6 +1282,8 @@ function buildCard(state) {
   var kind = state.step.kind;
   if (kind === 'name') return nameCard(state);
   if (kind === 'trigger') return triggerCard(state);
+  if (kind === 'changedTrigger') return changedTriggerCard(state);
+  if (kind === 'carriedBatch') return carriedBatchCard(state);
   if (kind === 'check') return checkCard(state);
   if (kind === 'semanticCheck') return semanticCard(state);
   return confirmCard(state);

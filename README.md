@@ -271,8 +271,10 @@ call reviews the carried clauses against the before/after section texts and can 
 them for individual re-asking, with its reason printed. That call is demote-only: it can
 make the review more careful, never less — and answering `n` at the batch confirmation
 always gets you the full clause-by-clause walkthrough. The updated YAML is written back
-to the `--update` path (or to `--out`). Running `calibrate` afterwards is the safety net
-for anything both the quote diff and the triage missed.
+to the `--update` path (or to `--out`). `--update` combines with `--web`: the same
+diff-scoped interview runs in your browser, with carried clauses as a single
+keep-all card and flagged ones called out with the triage reason. Running `calibrate`
+afterwards is the safety net for anything both the quote diff and the triage missed.
 
 ## Library use
 
