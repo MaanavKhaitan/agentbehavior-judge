@@ -1,11 +1,11 @@
 # Agent context for this repo
 
-Orientation for coding agents (and humans) working on `agentbehavior-judge`. Verify
+Orientation for coding agents (and humans) working on `behavior-judge`. Verify
 details against the code if much has changed since 2026-08.
 
 ## 1. The repo in one paragraph
 
-`agentbehavior-judge` is a companion tool to the
+`behavior-judge` is a companion tool to the
 [Agent Behavior standard](https://github.com/braintrustdata/agentbehavior): specs
 (`BEHAVIOR.md`) describe expected agent conduct in prose and deliberately say nothing
 about how to judge a trajectory against them. This package closes that gap — it compiles
