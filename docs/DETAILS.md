@@ -1,7 +1,7 @@
 # behavior-judge: the detailed guide
 
 This is the long-form documentation — full predicate semantics, the judging pipeline,
-calibration methodology, and the `--web` frontends. For the concise overview, start with
+calibration methodology, and the browser frontends. For the concise overview, start with
 the [README](../README.md).
 
 Compile an [Agent Behavior](https://github.com/braintrustdata/agentbehavior) spec into a
@@ -20,8 +20,8 @@ hand-building judging machinery. `behavior-judge` closes that gap:
 - **`calibrate`** measures judge agreement against trajectories with known verdicts.
 
 ```
-behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--web]
-behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify] [--web]
+behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--no-web]
+behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify] [--no-web]
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 ```
 
@@ -126,7 +126,8 @@ skill):
 ```console
 $ behavior-judge judge \
     examples/primary-source-tax-research/judge.yaml \
-    examples/primary-source-tax-research/trajectories/skill-read-too-late.json --no-verify
+    examples/primary-source-tax-research/trajectories/skill-read-too-late.json \
+    --no-verify --no-web
 skill-read-too-late: false
   Read the tax research skill before beginning source research: false
     predicate "the agent first reads the tax research skill, before searching or opening a source": false [event-2] (unverified)
@@ -139,13 +140,13 @@ skill read — with no LLM in the loop. With `BRAINTRUST_API_KEY` set, drop `--n
 the verifier confirms the violation, the semantic trigger for the second meta-behavior
 fires, and its clauses get judged too.
 
-With `--web` the same report renders in your browser: the CLI starts a local-only
-server (127.0.0.1, one-time token in the URL), opens the page, and shows one card per
-run — cards appear live as runs are judged — with plain-language verdicts, each rule
-expandable down to its clauses, and the deciding events quoted as evidence. The page
-tells the terminal once it has rendered, the server shuts down, and the plain-text
-report above still prints. `--web` combines with everything except `--json` (pick one
-format) and is not available for `calibrate` yet.
+Without `--no-web` the same report renders in your browser — the default: the CLI
+starts a local-only server (127.0.0.1, one-time token in the URL), opens the page, and
+shows one card per run — cards appear live as runs are judged — with plain-language
+verdicts, each rule expandable down to its clauses, and the deciding events quoted as
+evidence. The page tells the terminal once it has rendered, the server shuts down, and
+the plain-text report above still prints. `--json` also keeps the report in the
+terminal (one format at a time), and `calibrate` always reports in the terminal.
 
 To measure the IR against trajectories with known verdicts (with `BRAINTRUST_API_KEY`
 set — the semantic clauses need the LLM to reach the expected verdicts):
@@ -238,13 +239,14 @@ never show); accepting it is your assertion that the instrumentation emits that 
 if it doesn't, demote the clause to a semantic check or drop it. The confirmed YAML is
 written next to your `BEHAVIOR.md` (or to `--out`).
 
-With `--web` the same interview runs in your browser instead of the terminal: the CLI
-starts a local-only server (bound to 127.0.0.1, guarded by a one-time token in the URL),
-opens the page, and walks you through one card per trigger/check with the matchers
-rendered in plain language, sample events shown as evidence, and a back button for
-revisiting earlier answers. The terminal process still does everything real — the LLM
-call, the vocabulary flagging, writing `judge.yaml` — so nothing about the output
-changes; close the tab or Ctrl-C the terminal to abort.
+The interview runs in your browser by default: the CLI starts a local-only server
+(bound to 127.0.0.1, guarded by a one-time token in the URL), opens the page, and walks
+you through one card per trigger/check with the matchers rendered in plain language,
+sample events shown as evidence, and a back button for revisiting earlier answers. The
+terminal process still does everything real — the LLM call, the vocabulary flagging,
+writing `judge.yaml` — so nothing about the output changes; close the tab or Ctrl-C the
+terminal to abort. Pass `--no-web` to answer the same interview in the terminal
+instead.
 
 Hand-writing `judge.yaml` is equally supported; `generate` is a convenience, not a
 requirement.
@@ -275,10 +277,11 @@ call reviews the carried clauses against the before/after section texts and can 
 them for individual re-asking, with its reason printed. That call is demote-only: it can
 make the review more careful, never less — and answering `n` at the batch confirmation
 always gets you the full clause-by-clause walkthrough. The updated YAML is written back
-to the `--update` path (or to `--out`). `--update` combines with `--web`: the same
-diff-scoped interview runs in your browser, with carried clauses as a single
-keep-all card and flagged ones called out with the triage reason. Running `calibrate`
-afterwards is the safety net for anything both the quote diff and the triage missed.
+to the `--update` path (or to `--out`). `--update` keeps the browser default: the same
+diff-scoped interview runs in your browser (or the terminal with `--no-web`), with
+carried clauses as a single keep-all card and flagged ones called out with the triage
+reason. Running `calibrate` afterwards is the safety net for anything both the quote
+diff and the triage missed.
 
 ## Library use
 

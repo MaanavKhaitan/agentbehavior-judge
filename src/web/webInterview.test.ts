@@ -315,7 +315,7 @@ describe("runWebInterview", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Update mode (`generate --web --update`): the same server around the update
+// Update mode (`generate --update` in the browser): the same server around the update
 // driver. Fixtures mirror update.test.ts.
 // ---------------------------------------------------------------------------
 

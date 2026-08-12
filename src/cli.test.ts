@@ -130,7 +130,12 @@ describe("behavior-judge judge", () => {
     };
 
     const { exitCode, stdout } = await captureMain(
-      ["judge", path.join(directory, "judge.yaml"), path.join(directory, "trajectory.json")],
+      [
+        "judge",
+        path.join(directory, "judge.yaml"),
+        path.join(directory, "trajectory.json"),
+        "--no-web",
+      ],
       deps,
     );
 
@@ -141,7 +146,7 @@ describe("behavior-judge judge", () => {
     expect(stdout).toContain("[event-2]");
   });
 
-  it("serves the report on a local browser server with --web", async () => {
+  it("serves the report on a local browser server by default", async () => {
     const directory = await writeFixtures({
       "judge.yaml": predicateOnlyIr,
       "trajectories.json": JSON.stringify([
@@ -165,7 +170,6 @@ describe("behavior-judge judge", () => {
         path.join(directory, "judge.yaml"),
         path.join(directory, "trajectories.json"),
         "--no-verify",
-        "--web",
       ],
       deps,
     );
@@ -192,6 +196,18 @@ describe("behavior-judge judge", () => {
     expect(stderr).toContain("--web and --json cannot be combined");
   });
 
+  it("rejects --web combined with --no-web", async () => {
+    const { exitCode, stderr } = await captureMain([
+      "judge",
+      "judge.yaml",
+      "trajectories.json",
+      "--web",
+      "--no-web",
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--web and --no-web cannot be combined");
+  });
+
   it("errors when the IR or trajectory arguments are missing", async () => {
     const { exitCode, stderr } = await captureMain(["judge"]);
     expect(exitCode).toBe(1);
@@ -211,6 +227,7 @@ describe("behavior-judge judge", () => {
         path.join(directory, "judge.yaml"),
         path.join(directory, "trajectory.json"),
         "--no-verify",
+        "--no-web",
       ],
       {
         loadEnv: () => {
@@ -405,7 +422,7 @@ The agent first reads the tax research skill, before searching or opening a sour
 }
 
 describe("behavior-judge generate", () => {
-  it("runs the interview and writes the confirmed IR", async () => {
+  it("runs the terminal interview and writes the confirmed IR with --no-web", async () => {
     const behaviorDirectory = await writeGenerateFixture();
     const deps: CliDeps = {
       complete: () => Promise.resolve(generateProposal),
@@ -413,7 +430,7 @@ describe("behavior-judge generate", () => {
     };
 
     const { exitCode, stdout } = await captureMain(
-      ["generate", behaviorDirectory, path.join(behaviorDirectory, "trajectory.json")],
+      ["generate", behaviorDirectory, path.join(behaviorDirectory, "trajectory.json"), "--no-web"],
       deps,
     );
 
@@ -439,6 +456,7 @@ describe("behavior-judge generate", () => {
         path.join(directory, "trajectory.json"),
         "--update",
         path.join(directory, "judge.yaml"),
+        "--no-web",
       ],
       deps,
     );
@@ -453,7 +471,7 @@ describe("behavior-judge generate", () => {
     );
   });
 
-  it("serves the interview on a local browser server with --web", async () => {
+  it("serves the interview on a local browser server by default", async () => {
     const behaviorDirectory = await writeGenerateFixture();
 
     // The browser stand-in answers as soon as the CLI "opens" the URL:
@@ -471,7 +489,7 @@ describe("behavior-judge generate", () => {
     };
 
     const { exitCode, stdout } = await captureMain(
-      ["generate", behaviorDirectory, path.join(behaviorDirectory, "trajectory.json"), "--web"],
+      ["generate", behaviorDirectory, path.join(behaviorDirectory, "trajectory.json")],
       deps,
     );
 
@@ -483,7 +501,8 @@ describe("behavior-judge generate", () => {
     expect(parseIr(written).metaBehaviors).toHaveLength(1);
   });
 
-  it("exits 1 without writing when the browser interview is cancelled", async () => {
+  // Explicit --web still opts in (it is simply the default now).
+  it("exits 1 without writing when the browser interview is cancelled (explicit --web)", async () => {
     const behaviorDirectory = await writeGenerateFixture();
 
     let browserRun: Promise<InterviewSnapshot> | undefined;
@@ -509,7 +528,7 @@ describe("behavior-judge generate", () => {
     await expect(readFile(path.join(behaviorDirectory, "judge.yaml"), "utf8")).rejects.toThrow();
   });
 
-  it("runs the update interview in the browser with --web --update", async () => {
+  it("runs the update interview in the browser by default with --update", async () => {
     const directory = await writeUpdateFixture();
 
     // Unchanged spec: the browser sees only the confirm card; zero LLM calls.
@@ -526,7 +545,6 @@ describe("behavior-judge generate", () => {
         "generate",
         directory,
         path.join(directory, "trajectory.json"),
-        "--web",
         "--update",
         path.join(directory, "judge.yaml"),
       ],

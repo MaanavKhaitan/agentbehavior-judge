@@ -31,7 +31,7 @@ export interface CliDeps {
    * workspace `.env` never leaks into `process.env`.
    */
   loadEnv?: () => Promise<void>;
-  /** Replaces the platform browser opener for `--web` runs; tests use it to reach the URL. */
+  /** Replaces the platform browser opener for web-mode runs (the default); tests use it to reach the URL. */
   openBrowser?: (url: string) => void;
 }
 
@@ -45,7 +45,8 @@ interface ParsedArgs {
   update: string | undefined;
   model: string | undefined;
   noVerify: boolean;
-  web: boolean;
+  /** Explicit --web / --no-web choice; undefined means neither flag was given. */
+  web: boolean | undefined;
 }
 
 function parseCliArgs(argv: string[]): ParsedArgs {
@@ -61,8 +62,13 @@ function parseCliArgs(argv: string[]): ParsedArgs {
       model: { type: "string" },
       "no-verify": { type: "boolean" },
       web: { type: "boolean" },
+      "no-web": { type: "boolean" },
     },
   });
+
+  if (values.web === true && values["no-web"] === true) {
+    throw new Error("--web and --no-web cannot be combined.");
+  }
 
   return {
     command: positionals[0],
@@ -74,7 +80,7 @@ function parseCliArgs(argv: string[]): ParsedArgs {
     update: values.update,
     model: values.model,
     noVerify: values["no-verify"] ?? false,
-    web: values.web ?? false,
+    web: values["no-web"] === true ? false : values.web,
   };
 }
 
@@ -82,8 +88,8 @@ function usage(): string {
   return `behavior-judge compiles Agent Behavior specs into judge IRs and runs them over trajectories.
 
 Usage:
-  behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--web]
-  behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify] [--web]
+  behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--no-web]
+  behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify] [--no-web]
   behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 
 generate interviews you through compiling a BEHAVIOR.md into a judge.yaml IR,
@@ -91,13 +97,14 @@ binding deterministic checks to the event vocabulary observed in the sample
 trajectories. With --update it diffs the spec against an existing IR instead:
 unchanged sections carry over without questions, and the interview covers only
 changed, added, and removed sections (--out defaults to the --update file).
-With --web the interview — plain or --update — runs in your browser on a
+The interview — plain or --update — runs in your browser by default on a
 local-only server (127.0.0.1, one-time token); the terminal prints the URL and
-still writes the file. judge runs an IR over trajectory JSON files; with --web
-the report renders in your browser on the same kind of local-only server, and
-the CLI exits once the page has loaded (the plain-text report still prints to
-the terminal). calibrate compares judge verdicts against expected verdicts
-recorded in the trajectory files.
+still writes the file. Pass --no-web to answer in the terminal instead. judge
+runs an IR over trajectory JSON files; the report likewise renders in your
+browser by default, and the CLI exits once the page has loaded (the plain-text
+report still prints to the terminal); --json or --no-web keeps the report in
+the terminal. calibrate compares judge verdicts against expected verdicts
+recorded in the trajectory files and always reports in the terminal.
 
 Trajectory JSON files contain a trajectory ({id, complete, events}), a
 {trajectory, expected} wrapper, or an array of either.
@@ -190,16 +197,19 @@ async function runJudgeCommand(options: JudgeCommandOptions): Promise<number> {
     return 1;
   }
 
-  if (args.web && options.calibrate) {
+  if (args.web === true && options.calibrate) {
     process.stderr.write(
-      "error: --web is not supported with calibrate yet; run judge --web for the browser report.\n",
+      "error: --web is not supported with calibrate yet; calibrate reports in the terminal.\n",
     );
     return 1;
   }
-  if (args.web && args.json) {
+  if (args.web === true && args.json) {
     process.stderr.write("error: --web and --json cannot be combined; pick one report format.\n");
     return 1;
   }
+  // The browser report is the default; --json or --no-web picks the terminal,
+  // and calibrate has no browser report yet.
+  const web = !options.calibrate && !args.json && args.web !== false;
 
   const ir = await loadIrFile(irPath);
   const cases = await loadCases(trajectoryFiles);
@@ -219,7 +229,7 @@ async function runJudgeCommand(options: JudgeCommandOptions): Promise<number> {
     return judgeTrajectory(judgeOptions);
   };
 
-  if (args.web) {
+  if (web) {
     const judgments = await runWebReport({
       ir,
       cases,
@@ -328,7 +338,8 @@ async function runGenerateCommand(args: ParsedArgs, deps: CliDeps): Promise<numb
       ));
   const outPath = args.out ?? args.update ?? path.join(path.dirname(record.location), "judge.yaml");
 
-  if (args.web) {
+  // The browser interview is the default; --no-web stays in the readline flow.
+  if (args.web !== false) {
     const trajectories = cases.map((trajectoryCase) => trajectoryCase.trajectory);
     const webOptions = {
       complete,

@@ -1,5 +1,5 @@
 /**
- * The single-file page served by the web report server (`judge --web`).
+ * The single-file page served by the web report server (the `judge` default).
  *
  * Shares the interview page's visual language (same palette, cards, tags,
  * evidence panels) but renders judge results instead of asking questions.

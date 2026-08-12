@@ -41,24 +41,27 @@ gateway client derive from that repo's examples.
 ## 3. CLI surface
 
 ```
-behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--web]
-behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify] [--web]
+behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--no-web]
+behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify] [--no-web]
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 ```
 
 Exit codes: `judge` 0 on successful run; `calibrate` 1 on any expected/actual
 disagreement (CI gate); `generate` 1 if the user declines the final confirm. Errors → 1.
 `generate --update <ir.yaml>` is the diff-scoped re-interview after a spec edit (§10);
-`--out` then defaults to the `--update` path. `generate --web` serves the interview to
-a browser instead of readline (§10a); it combines with `--update` (the update interview
-adds two step kinds the page renders, §10a). `judge --web` serves the report to a
-browser (§10b); it rejects `--json` (one format at a time), and `calibrate` does not
-support `--web` yet.
+`--out` then defaults to the `--update` path. The browser is the default frontend:
+`generate` serves the interview to a browser (§10a) unless `--no-web` picks readline,
+and combines with `--update` (the update interview adds two step kinds the page
+renders, §10a); `judge` serves the report to a browser (§10b) unless `--no-web` or
+`--json` picks the terminal (json implies the terminal report). Explicit `--web` is
+still accepted as an opt-in; it rejects `--json` (one format at a time) and `--no-web`,
+and `calibrate` does not support the browser yet (it always reports in the terminal;
+explicit `--web` errors).
 
 ## 4. Source map (`src/`, dependency order)
 
 Layout: the judging engine lives in `src/core/`, the spec→IR authoring flows in
-`src/interview/`, and the two `--web` frontends in `src/web/`; the entry points
+`src/interview/`, and the two web frontends in `src/web/`; the entry points
 (`index.ts`, `cli.ts`) and the CLI-only `env.ts` stay at the `src/` root. Tests are
 colocated with their sources. Dependencies flow one way — web → interview → core —
 and the root entry points import all three.
@@ -113,23 +116,23 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
   through an `UpdatePresenter` — `InterviewPresenter` plus two update-only steps
   (`askChangedTrigger` `[y/p/s/e]`, `askCarriedBatch` keep-all/review) and update note
   rendering. `createTextUpdatePresenter` is the readline frontend;
-  `runUpdateInterview` = prepare → drive with it. `--web --update` drives the same
-  driver from the browser (§10a).
+  `runUpdateInterview` = prepare → drive with it. `--update` drives the same
+  driver from the browser by default (§10a).
 
-**`src/web/` — the `--web` frontends (all CLI-only concerns, not exported from
-`index.ts`):**
+**`src/web/` — the web frontends, the CLI default (all CLI-only concerns, not exported
+from `index.ts`):**
 
-- `webServer.ts` — shared plumbing for both `--web` servers: 127.0.0.1-only `node:http`
+- `webServer.ts` — shared plumbing for both web servers: 127.0.0.1-only `node:http`
   server with the one-time token on every route (`startWebServer`) + the SSE snapshot
   broadcaster both sessions extend (`SnapshotSession`).
-- `webInterview.ts` — the `--web` presenter for both the generate and update
+- `webInterview.ts` — the browser presenter for both the generate and update
   interviews: SSE state pushes + JSON answer posts over a `webServer.ts` server,
   back-navigation by answer-replay (§10a).
 - `webInterviewPage.ts` — the single-file browser page served by `webInterview.ts`
   (inline CSS/JS in one template literal; the embedded script avoids backticks and
   `${` so the literal needs no escaping; all dynamic text rendered via DOM APIs, never
   innerHTML).
-- `webReport.ts` — the `judge --web` server, on the same `webServer.ts` plumbing;
+- `webReport.ts` — the `judge` web-report server, on the same `webServer.ts` plumbing;
   pushes per-case judging progress then the final report, and blocks until the page
   posts `/ack` (§10b). Judging stays in judge.ts (the CLI passes a `judgeCase` seam).
 - `webReportPage.ts` — the single-file report page served by `webReport.ts`; same
@@ -336,7 +339,7 @@ the CLI contract `generate.test.ts` scripts against. The update flow has the sam
 shape: `runUpdateProposalInterview` speaking to an `UpdatePresenter`, with
 `createTextUpdatePresenter` as the readline frontend `update.test.ts` scripts against.
 
-## 10a. `generate --web` (browser presenter over the same drivers)
+## 10a. The `generate` web interview — the default (browser presenter over the same drivers; `--no-web` for readline)
 
 - `runWebInterview` / `runWebUpdateInterview` (webInterview.ts): binds `node:http` to
   127.0.0.1 on a random port,
@@ -364,7 +367,7 @@ shape: `runUpdateProposalInterview` speaking to an `UpdatePresenter`, with
   concern), unobserved-vocabulary warnings as amber callouts, edit-in-place for
   descriptions/questions/names, and a replay-backed back button. It holds no interview
   logic — it renders whatever step the server pushes.
-- Update mode (`--web --update`) adds two card kinds: `changedTrigger` (previous vs
+- Update mode (`--update`) adds two card kinds: `changedTrigger` (previous vs
   proposed trigger side by side, with a keep-previous button) and `carriedBatch` (the
   unflagged carried clauses as a list, keep-all vs review-individually). Triage-flagged
   clauses re-appear as ordinary trigger/check/semantic cards with an amber
@@ -376,7 +379,7 @@ shape: `runUpdateProposalInterview` speaking to an `UpdatePresenter`, with
 - Aborting: cancel on the confirm card → done screen, `Aborted; nothing written.`,
   exit 1 (same as declining `[y/n]`). Ctrl-C in the terminal kills the server outright.
 
-## 10b. `judge --web` (browser report over the same server posture)
+## 10b. The `judge` web report — the default (browser report over the same server posture; `--no-web`/`--json` for the terminal)
 
 - `runWebReport` (webReport.ts): binds 127.0.0.1 on a random port, prints the token
   URL, opens the browser, then judges the cases one at a time through the CLI's
@@ -486,9 +489,10 @@ Test suite (zero network, `queuedCompletion` fake returning scripted JSON):
   error-state push and server teardown on judging failure.
 - `cli.test.ts` — `captureMain` + `mkdtemp` temp dirs for all three commands, exit codes,
   help/version/unknown-command, `generate --update` (in-place, zero-call unchanged path),
-  generate and judge `--web` end-to-end through the `openBrowser` seam (browser stand-ins
-  drive the interview / ack the report over HTTP while `main` blocks), `--web --update`
-  end-to-end (zero-call unchanged path through the browser), and the `--web`/`--json`
+  generate and judge web-by-default end-to-end through the `openBrowser` seam (browser
+  stand-ins drive the interview / ack the report over HTTP while `main` blocks; the
+  terminal paths pass `--no-web`), `--update` browser-default end-to-end (zero-call
+  unchanged path through the browser), and the `--web`/`--json`, `--web`/`--no-web`,
   and `calibrate --web` rejections.
 
 ## 12. Extension points

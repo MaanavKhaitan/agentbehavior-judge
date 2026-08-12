@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 
 /**
- * Shared plumbing for the two `--web` servers (webInterview.ts, webReport.ts):
+ * Shared plumbing for the two web servers (webInterview.ts, webReport.ts):
  * a 127.0.0.1-only `node:http` server where every route requires the one-time
  * token embedded in the printed URL, serving one static page, one SSE snapshot
  * stream, and JSON POST routes. CLI-only concern, not exported from index.ts.
