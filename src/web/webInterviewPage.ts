@@ -754,7 +754,7 @@ function checkDiagram(check) {
   if (check.type === 'pairing') {
     wrap.appendChild(taggedRow('Each', check.each, 'green'));
     wrap.appendChild(connector('must be followed by'));
-    wrap.appendChild(taggedRow('', check.followedBy, 'plain'));
+    wrap.appendChild(taggedRow('Then', check.followedBy, 'plain'));
     return wrap;
   }
   if (check.after) {
