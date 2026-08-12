@@ -72,8 +72,8 @@ predicates evaluate, semantic clauses report `na`.
 ## Use
 
 ```
-behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--web]
-behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--no-verify] [--web]
+behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--no-web]
+behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--no-verify] [--no-web]
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json]
 ```
 
@@ -82,13 +82,14 @@ metadata?}, ...]}` (an instrumentation convention of this tool, not part of the
 standard).
 
 - **`generate`** — one LLM call drafts a judge bound to the event vocabulary your
-  sample trajectories actually use, then an interview (terminal, or browser with
-  `--web`) walks you through every trigger and check with matching events shown as
-  evidence: accept, edit, demote to a semantic check, or drop. Writes `judge.yaml` next
-  to the spec. Hand-writing the YAML is equally supported.
+  sample trajectories actually use, then an interview (in your browser by default, or
+  the terminal with `--no-web`) walks you through every trigger and check with matching
+  events shown as evidence: accept, edit, demote to a semantic check, or drop. Writes
+  `judge.yaml` next to the spec. Hand-writing the YAML is equally supported.
 - **`judge`** — runs a judge over trajectories. Predicates are free; the LLM handles
   semantic clauses plus one confirmation call per predicate failure (a matcher can trip
-  on an event the clause didn't mean). `--web` renders the report in your browser.
+  on an event the clause didn't mean). The report renders in your browser by default;
+  `--no-web` or `--json` keeps it in the terminal.
 - **`generate --update judge.yaml`** — after a spec edit, re-interviews only what
   changed; unchanged sections carry over with zero questions and zero LLM calls.
 - **`calibrate`** — compares verdicts against labeled trajectories
@@ -153,7 +154,7 @@ metaBehaviors:
 ```
 
 Every check carries a verbatim `quote` from the spec, so every verdict traces to the
-clause it enforces. Full predicate semantics, the judging pipeline, the `--web`
+clause it enforces. Full predicate semantics, the judging pipeline, the browser
 frontends, and library usage are documented in [docs/DETAILS.md](docs/DETAILS.md).
 
 ## License

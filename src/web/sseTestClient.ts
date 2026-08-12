@@ -1,6 +1,6 @@
 /**
  * Shared machinery for the web test clients (webInterviewTestClient.ts,
- * webReportTestClient.ts): connects to a `--web` server's SSE snapshot stream,
+ * webReportTestClient.ts): connects to a web server's SSE snapshot stream,
  * parses its frames, and posts JSON back over the tokenized routes. Test-only;
  * not packed or exported.
  */

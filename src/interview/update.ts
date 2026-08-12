@@ -320,7 +320,7 @@ export function parseTriageResult(response: string, ids: string[]): Map<string, 
 // Structured update steps and answers. Like generate.ts, the update interview
 // splits into prepareUpdate (every LLM call: the shared proposal plus one
 // triage per changed section) and runUpdateProposalInterview (a deterministic
-// driver speaking to an UpdatePresenter) — which is what lets the --web UI
+// driver speaking to an UpdatePresenter) — which is what lets the browser UI
 // replay recorded answers for back-navigation without re-asking the model.
 // The two update-only interactions get their own step kinds; everything else
 // reuses the generate steps (with `reAskReason` set on triage-flagged ones).

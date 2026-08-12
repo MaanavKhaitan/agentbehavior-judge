@@ -1,6 +1,6 @@
 /**
- * The single-file page served by the web interview server (`generate --web`,
- * with or without `--update`).
+ * The single-file page served by the web interview server (the `generate`
+ * default, with or without `--update`).
  *
  * All interview state arrives over SSE (`GET /events`) and answers go back as
  * JSON (`POST /answer`, `POST /back`); the page holds no knowledge of

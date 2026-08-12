@@ -35,7 +35,7 @@ import { SnapshotSession, startWebServer } from "./webServer.js";
 
 /**
  * Browser presentation of the generate and update interviews
- * (`generate --web`, optionally with `--update`).
+ * (the `generate` default, optionally with `--update`; `--no-web` picks readline).
  *
  * The interview drivers in generate.ts and update.ts stay the single source
  * of truth; this module is one more presenter: steps stream to the page over
@@ -62,7 +62,7 @@ export interface WebInterviewOptions {
   port?: number;
 }
 
-/** `generate --web --update`: the same server around the update driver. */
+/** `generate --update` in the browser: the same server around the update driver. */
 export interface WebUpdateInterviewOptions extends Omit<WebInterviewOptions, "input"> {
   input: UpdateInput;
 }
@@ -485,7 +485,7 @@ async function serveInterview<Prepared>(
   }
 }
 
-/** Serve the generate interview (`generate --web`) to a browser. */
+/** Serve the generate interview (the `generate` default) to a browser. */
 export async function runWebInterview(options: WebInterviewOptions): Promise<JudgeIr | undefined> {
   return serveInterview({
     behaviorName: options.input.behaviorName,
@@ -503,7 +503,7 @@ export async function runWebInterview(options: WebInterviewOptions): Promise<Jud
   });
 }
 
-/** Serve the diff-scoped update interview (`generate --web --update`) to a browser. */
+/** Serve the diff-scoped update interview (the `generate --update` default) to a browser. */
 export async function runWebUpdateInterview(
   options: WebUpdateInterviewOptions,
 ): Promise<JudgeIr | undefined> {
