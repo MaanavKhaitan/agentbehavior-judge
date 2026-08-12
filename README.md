@@ -1,4 +1,4 @@
-# agentbehavior-judge
+# behavior-judge
 
 Compile an [Agent Behavior](https://github.com/braintrustdata/agentbehavior) spec into a
 checked-in judge and run it over agent trajectories.
@@ -279,7 +279,7 @@ afterwards is the safety net for anything both the quote diff and the triage mis
 ## Library use
 
 ```ts
-import { judgeTrajectory, parseIr, loadTrajectoryFile } from "agentbehavior-judge";
+import { judgeTrajectory, parseIr, loadTrajectoryFile } from "behavior-judge";
 
 const ir = parseIr(await fs.readFile("judge.yaml", "utf8"));
 const [trajectoryCase] = await loadTrajectoryFile("trajectory.json");
