@@ -1,7 +1,3 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
-
 import {
   prepareInterview,
   renderNote,
@@ -22,7 +18,9 @@ import {
 } from "./generate.js";
 import type { JudgeCompletion } from "./gateway.js";
 import type { JudgeIr } from "./ir.js";
+import { clip } from "./text.js";
 import { INTERVIEW_PAGE_HTML } from "./webInterviewPage.js";
+import { SnapshotSession, startWebServer } from "./webServer.js";
 
 /**
  * Browser presentation of the generate interview (`generate --web`).
@@ -33,9 +31,8 @@ import { INTERVIEW_PAGE_HTML } from "./webInterviewPage.js";
  * deterministic given (proposal, answers): pop the last recorded answer,
  * restart the driver, and replay the rest — the model is never re-asked.
  *
- * The server binds 127.0.0.1 on a random port and every route requires the
- * one-time token embedded in the printed URL, so other local processes (or
- * web pages poking at localhost) cannot answer the interview.
+ * Server plumbing (127.0.0.1-only, one-time token on every route) lives in
+ * webServer.ts, shared with the judge report server.
  */
 
 export interface WebInterviewOptions {
@@ -79,13 +76,7 @@ interface PendingStep {
 }
 
 const MAX_TEXT_ANSWER = 4000;
-const MAX_BODY_BYTES = 65536;
 const EVIDENCE_CONTENT_MAX = 200;
-
-function clip(content: string, max: number): string {
-  const flat = content.replaceAll(/\s+/g, " ").trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
-}
 
 function samplePayload(sample: EvidenceSample): Record<string, unknown> {
   const metadata: Record<string, string> = {};
@@ -208,19 +199,18 @@ function parseAnswer(step: AnyStep, raw: unknown): StepAnswer | undefined {
   return undefined;
 }
 
-class WebInterviewSession {
+class WebInterviewSession extends SnapshotSession<SessionState> {
   private readonly recorded: StepAnswer[] = [];
   private cursor = 0;
   private pending: PendingStep | undefined;
-  private revision = 0;
-  private state: SessionState = { type: "loading" };
-  private readonly clients = new Set<ServerResponse>();
 
   constructor(
-    private readonly behavior: string,
+    behavior: string,
     private readonly outPath: string,
     private readonly log: (line: string) => void,
-  ) {}
+  ) {
+    super(behavior, { type: "loading" });
+  }
 
   // The recorded answers are replayed positionally: the driver is
   // deterministic given (proposal, answers), so answer N always lands on the
@@ -296,131 +286,6 @@ class WebInterviewSession {
   fail(message: string): void {
     this.setState({ type: "error", message });
   }
-
-  attach(res: ServerResponse): void {
-    this.clients.add(res);
-    res.write(this.snapshotFrame());
-  }
-
-  detach(res: ServerResponse): void {
-    this.clients.delete(res);
-  }
-
-  closeClients(): void {
-    for (const client of this.clients) client.end();
-    this.clients.clear();
-  }
-
-  private setState(state: SessionState): void {
-    this.state = state;
-    this.revision += 1;
-    const frame = this.snapshotFrame();
-    for (const client of this.clients) client.write(frame);
-  }
-
-  private snapshotFrame(): string {
-    const snapshot = { revision: this.revision, behavior: this.behavior, state: this.state };
-    return `data: ${JSON.stringify(snapshot)}\n\n`;
-  }
-}
-
-function tokenMatches(provided: string | null, token: string): boolean {
-  if (provided === null) return false;
-  const providedBuffer = Buffer.from(provided);
-  const tokenBuffer = Buffer.from(token);
-  return (
-    providedBuffer.length === tokenBuffer.length && timingSafeEqual(providedBuffer, tokenBuffer)
-  );
-}
-
-function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk: Buffer) => {
-      body += chunk.toString();
-      if (body.length > MAX_BODY_BYTES) {
-        reject(new Error("request body too large"));
-        req.destroy();
-      }
-    });
-    req.on("end", () => {
-      if (body.length === 0) {
-        resolve(undefined);
-        return;
-      }
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
-function handleRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
-  token: string,
-  session: WebInterviewSession,
-): void {
-  const url = new URL(req.url ?? "/", "http://localhost");
-  if (url.pathname === "/favicon.ico") {
-    res.writeHead(204).end();
-    return;
-  }
-  if (!tokenMatches(url.searchParams.get("token"), token)) {
-    res.writeHead(403, { "content-type": "text/plain" }).end("Forbidden");
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/") {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(INTERVIEW_PAGE_HTML);
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/events") {
-    res.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-store",
-      connection: "keep-alive",
-    });
-    session.attach(res);
-    const ping = setInterval(() => {
-      res.write(": ping\n\n");
-    }, 15000);
-    ping.unref();
-    req.on("close", () => {
-      clearInterval(ping);
-      session.detach(res);
-    });
-    return;
-  }
-
-  if (req.method === "POST" && (url.pathname === "/answer" || url.pathname === "/back")) {
-    readJsonBody(req).then(
-      (body) => {
-        let status: number;
-        if (url.pathname === "/back") {
-          status = session.back();
-        } else {
-          const record =
-            body !== null && typeof body === "object" ? (body as Record<string, unknown>) : {};
-          status = session.answer(record.stepId, record.answer);
-        }
-        res.writeHead(status, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: status === 200 }));
-      },
-      () => {
-        res
-          .writeHead(400, { "content-type": "application/json" })
-          .end(JSON.stringify({ ok: false }));
-      },
-    );
-    return;
-  }
-
-  res.writeHead(404, { "content-type": "text/plain" }).end("Not found");
 }
 
 /**
@@ -429,23 +294,23 @@ function handleRequest(
  * is shown, so the page never claims a file exists that was not written.
  */
 export async function runWebInterview(options: WebInterviewOptions): Promise<JudgeIr | undefined> {
-  const token = randomBytes(16).toString("hex");
   const session = new WebInterviewSession(options.input.behaviorName, options.outPath, options.log);
-  const server = createServer((req, res) => {
-    handleRequest(req, res, token, session);
+  const server = await startWebServer({
+    pageHtml: INTERVIEW_PAGE_HTML,
+    session,
+    post: {
+      "/answer": (body) => {
+        const record =
+          body !== null && typeof body === "object" ? (body as Record<string, unknown>) : {};
+        return session.answer(record.stepId, record.answer);
+      },
+      "/back": () => session.back(),
+    },
+    port: options.port,
   });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port ?? 0, "127.0.0.1", () => {
-      resolve();
-    });
-  });
-  const { port } = server.address() as AddressInfo;
-  const url = `http://127.0.0.1:${port}/?token=${token}`;
-  options.log(`Interview running at ${url}`);
+  options.log(`Interview running at ${server.url}`);
   options.log("Answer it in your browser; Ctrl-C here aborts without writing.");
-  options.openBrowser?.(url);
+  options.openBrowser?.(server.url);
 
   try {
     const prepared = await prepareInterview(options.input, options.complete, (note) => {
@@ -475,13 +340,6 @@ export async function runWebInterview(options: WebInterviewOptions): Promise<Jud
     session.fail(error instanceof Error ? error.message : String(error));
     throw error;
   } finally {
-    session.closeClients();
-    await new Promise<void>((resolve) => {
-      server.close(() => {
-        resolve();
-      });
-      // Keep-alive sockets from answer posts would otherwise stall close().
-      server.closeAllConnections();
-    });
+    await server.close();
   }
 }

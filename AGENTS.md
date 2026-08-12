@@ -67,6 +67,8 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
   `behaviorVerdictToScore`.
 - `predicates.ts` — pure deterministic core: `matchesEvent`/`matchesAny`/`findMatches` +
   `evaluatePredicate`. No LLM, no IO.
+- `text.ts` — `flattenWhitespace`/`clip`, the whitespace normalization shared by quote
+  matching (update.ts), evidence rendering (generate.ts), and web payloads.
 - `gateway.ts` — Braintrust Gateway client + JSON helpers + `completeJsonWithRetry`
   (retry-once-with-error-appended) + `JudgeCompletion` type.
 - `semantic.ts` — the scoped LLM check: one system prompt, `parseSemanticResult`
@@ -99,24 +101,29 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
   fills `process.env` from the closest `.env` at or above cwd; already-set variables win.
   CLI-only concern, not exported from `index.ts`; `cli.test.ts`'s `captureMain` stubs the
   `CliDeps.loadEnv` seam so the repo's real `.env` never leaks into tests.
-- `webInterview.ts` — the `--web` presenter: 127.0.0.1-only `node:http` server, one-time
-  token on every route, SSE state pushes + JSON answer posts, back-navigation by
-  answer-replay (§10a). CLI-only concern, not exported from `index.ts`.
+- `webServer.ts` — shared plumbing for both `--web` servers: 127.0.0.1-only `node:http`
+  server with the one-time token on every route (`startWebServer`) + the SSE snapshot
+  broadcaster both sessions extend (`SnapshotSession`). CLI-only concern, not exported
+  from `index.ts`.
+- `webInterview.ts` — the `--web` presenter: SSE state pushes + JSON answer posts over
+  a `webServer.ts` server, back-navigation by answer-replay (§10a). CLI-only concern,
+  not exported from `index.ts`.
 - `webInterviewPage.ts` — the single-file browser page served by `webInterview.ts`
   (inline CSS/JS in one template literal; the embedded script avoids backticks and
   `${` so the literal needs no escaping; all dynamic text rendered via DOM APIs, never
   innerHTML).
-- `webReport.ts` — the `judge --web` server: same 127.0.0.1/one-time-token/SSE posture
-  as `webInterview.ts`; pushes per-case judging progress then the final report, and
-  blocks until the page posts `/ack` (§10b). Judging stays in judge.ts (the CLI passes
-  a `judgeCase` seam). CLI-only concern, not exported from `index.ts`.
+- `webReport.ts` — the `judge --web` server, on the same `webServer.ts` plumbing;
+  pushes per-case judging progress then the final report, and blocks until the page
+  posts `/ack` (§10b). Judging stays in judge.ts (the CLI passes a `judgeCase` seam).
+  CLI-only concern, not exported from `index.ts`.
 - `webReportPage.ts` — the single-file report page served by `webReport.ts`; same
   conventions and visual language as `webInterviewPage.ts`.
 - `cli.ts` — dispatch, report formatting, readline wiring, browser opener, `CliDeps`
   injection.
-- `index.ts` — public exports. `taxFixtures.ts`, `webInterviewTestClient.ts`,
-  `webReportTestClient.ts` — test-only helpers (tax cases as TS data; SSE clients
-  standing in for the two browser pages). None are packed/exported.
+- `index.ts` — public exports. `taxFixtures.ts`, `sseTestClient.ts`,
+  `webInterviewTestClient.ts`, `webReportTestClient.ts` — test-only helpers (tax cases
+  as TS data; SSE clients standing in for the two browser pages, sharing the
+  `sseTestClient.ts` stream machinery). None are packed/exported.
 
 ## 5. Event schema (tool convention, NOT part of the standard)
 

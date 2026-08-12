@@ -82,16 +82,6 @@ function predicateCitations(events: TrajectoryEvent[], description: string): Eve
   }));
 }
 
-function insufficientEvidenceMeta(name: string): MetaBehaviorResult {
-  return {
-    name,
-    verdict: "na",
-    naReason: "insufficient_evidence",
-    triggered: false,
-    clauses: [],
-  };
-}
-
 function notTriggeredMeta(
   name: string,
   naReason: NaReason,
@@ -106,13 +96,10 @@ function notTriggeredMeta(
   };
 }
 
-interface TriggerOutcome {
-  triggered: boolean;
-  metaResult?: MetaBehaviorResult;
-}
+type TriggerOutcome = { triggered: true } | { triggered: false; metaResult: MetaBehaviorResult };
 
 async function evaluateTrigger(
-  meta: MetaBehaviorIr,
+  metaName: string,
   trigger: Trigger,
   trajectory: AgentTrajectory,
   behaviorName: string,
@@ -124,7 +111,7 @@ async function evaluateTrigger(
     return {
       triggered: false,
       metaResult: notTriggeredMeta(
-        meta.name,
+        metaName,
         trajectory.complete ? "not_applicable" : "insufficient_evidence",
       ),
     };
@@ -133,7 +120,7 @@ async function evaluateTrigger(
   if (complete === undefined) {
     return {
       triggered: false,
-      metaResult: notTriggeredMeta(meta.name, "insufficient_evidence", {
+      metaResult: notTriggeredMeta(metaName, "insufficient_evidence", {
         kind: "semantic",
         quote: trigger.description,
         verdict: "na",
@@ -148,7 +135,7 @@ async function evaluateTrigger(
     complete,
     buildSemanticCheckMessages({
       behaviorName,
-      metaBehaviorName: meta.name,
+      metaBehaviorName: metaName,
       quote: trigger.description,
       question: `Did this condition occur in the trajectory: ${trigger.description} Answer "true" if it occurred, "false" if it did not.`,
       trajectory,
@@ -168,14 +155,16 @@ async function evaluateTrigger(
   };
   return {
     triggered: false,
-    metaResult: notTriggeredMeta(meta.name, triggerClause.naReason ?? "not_applicable", {
-      ...triggerClause,
-    }),
+    metaResult: notTriggeredMeta(
+      metaName,
+      triggerClause.naReason ?? "not_applicable",
+      triggerClause,
+    ),
   };
 }
 
 async function evaluatePredicateClause(
-  meta: MetaBehaviorIr,
+  metaName: string,
   check: PredicateCheck,
   result: PredicateResult,
   trajectory: AgentTrajectory,
@@ -202,7 +191,7 @@ async function evaluatePredicateClause(
     complete,
     buildVerifyFalseMessages({
       behaviorName,
-      metaBehaviorName: meta.name,
+      metaBehaviorName: metaName,
       quote: check.quote,
       flaggedEvents: result.citedEvents,
       trajectory,
@@ -236,20 +225,20 @@ async function judgeMetaBehavior(
   verify: boolean,
 ): Promise<MetaBehaviorResult> {
   const triggerOutcome = await evaluateTrigger(
-    meta,
+    meta.name,
     meta.trigger,
     trajectory,
     behaviorName,
     complete,
   );
-  if (!triggerOutcome.triggered) return triggerOutcome.metaResult!;
+  if (!triggerOutcome.triggered) return triggerOutcome.metaResult;
 
   const clauses: ClauseResult[] = [];
   for (const check of meta.checks) {
     const predicateResult = evaluatePredicate(check, trajectory);
     clauses.push(
       await evaluatePredicateClause(
-        meta,
+        meta.name,
         check,
         predicateResult,
         trajectory,
@@ -315,7 +304,9 @@ export async function judgeTrajectory(options: JudgeOptions): Promise<Trajectory
       behavior: ir.behavior,
       trajectoryId: trajectory.id,
       verdict: "na",
-      metaBehaviors: ir.metaBehaviors.map((meta) => insufficientEvidenceMeta(meta.name)),
+      metaBehaviors: ir.metaBehaviors.map((meta) =>
+        notTriggeredMeta(meta.name, "insufficient_evidence"),
+      ),
     };
   }
 

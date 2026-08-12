@@ -26,6 +26,7 @@ import {
   parseJsonObject,
   requireNonEmptyString,
   type GatewayMessage,
+  type JudgeCompletion,
 } from "./gateway.js";
 import {
   serializeIr,
@@ -35,6 +36,7 @@ import {
   type SemanticCheck,
   type Trigger,
 } from "./ir.js";
+import { flattenWhitespace } from "./text.js";
 import type { AgentTrajectory } from "./trajectory.js";
 
 // ---------------------------------------------------------------------------
@@ -79,10 +81,6 @@ export function planUpdate(existing: JudgeIr, sections: SpecSection[]): UpdatePl
 // whose quotes vanished are dropped; proposal clauses with new quotes are the
 // deltas the interview asks about.
 // ---------------------------------------------------------------------------
-
-function flattenWhitespace(text: string): string {
-  return text.replaceAll(/\s+/g, " ").trim();
-}
 
 export function quoteInSection(quote: string, sectionBody: string): boolean {
   return flattenWhitespace(sectionBody).includes(flattenWhitespace(quote));
@@ -378,6 +376,172 @@ async function interviewChangedTrigger(
   return proposed;
 }
 
+interface ReviewedSection {
+  trigger: Trigger;
+  checks: PredicateCheck[];
+  semanticChecks: SemanticCheck[];
+}
+
+async function reviewAddedSection(
+  proposed: MetaBehaviorIr,
+  trajectories: AgentTrajectory[],
+  sets: VocabularySets,
+  deps: InterviewDeps,
+): Promise<ReviewedSection> {
+  const trigger = await interviewTrigger(proposed.trigger, trajectories, sets, deps);
+  const { checks, demoted } = await interviewChecks(proposed.checks, trajectories, sets, deps);
+  const semanticChecks = await interviewSemanticChecks(
+    [...proposed.semanticChecks, ...demoted],
+    deps,
+  );
+  return { trigger, checks, semanticChecks };
+}
+
+async function triageCarriedItems(
+  existing: MetaBehaviorIr,
+  section: SpecSection,
+  items: CarriedItem[],
+  complete: JudgeCompletion,
+): Promise<Map<string, TriageVerdict>> {
+  if (items.length === 0) return new Map();
+  if (existing.source === undefined) {
+    // No recorded previous section text, so the edit's impact can't be
+    // assessed: re-review every carried clause (the safe ceiling).
+    return new Map(
+      items.map((item) => [
+        item.id,
+        {
+          reAsk: true,
+          reason: "the IR did not record the previous section text, so the edit cannot be triaged",
+        },
+      ]),
+    );
+  }
+  return completeJsonWithRetry(
+    complete,
+    buildTriageMessages({
+      metaName: existing.name,
+      previousSection: existing.source,
+      currentSection: section.body,
+      items: items.map((item) => ({ id: item.id, description: carriedItemDescription(item) })),
+    }),
+    (response) =>
+      parseTriageResult(
+        response,
+        items.map((item) => item.id),
+      ),
+  );
+}
+
+/**
+ * Review one changed section: mechanical delta against the proposal, then
+ * demote-only triage over the carried clauses, then interview only what needs
+ * a human decision.
+ */
+async function reviewChangedSection(
+  existing: MetaBehaviorIr,
+  proposed: MetaBehaviorIr,
+  section: SpecSection,
+  trajectories: AgentTrajectory[],
+  sets: VocabularySets,
+  deps: InterviewDeps,
+): Promise<ReviewedSection> {
+  const delta = computeSectionDelta(existing, proposed, section.body);
+
+  const items: CarriedItem[] = [];
+  if (delta.triggerCarried) {
+    items.push({ id: "trigger", kind: "trigger", trigger: existing.trigger });
+  }
+  delta.carriedChecks.forEach((check, index) => {
+    items.push({ id: `check-${index + 1}`, kind: "check", check });
+  });
+  delta.carriedSemanticChecks.forEach((check, index) => {
+    items.push({ id: `semantic-${index + 1}`, kind: "semantic", check });
+  });
+  const triage = await triageCarriedItems(existing, section, items, deps.complete);
+
+  let trigger: Trigger = existing.trigger;
+  if (!delta.triggerCarried) {
+    trigger = await interviewChangedTrigger(
+      existing.trigger,
+      proposed.trigger,
+      trajectories,
+      sets,
+      deps,
+    );
+  }
+
+  let batch = items.filter((item) => triage.get(item.id)?.reAsk !== true);
+  let reAsk = items.filter((item) => triage.get(item.id)?.reAsk === true);
+  if (batch.length > 0) {
+    deps.write(`Carrying over ${batch.length} clause(s) whose spec sentences are unchanged:`);
+    for (const item of batch) {
+      deps.write(`  ${carriedLabel(item)}`);
+    }
+    const answer = await askChoice(deps, "Keep these? [y] yes / [n] review individually", [
+      "y",
+      "n",
+    ]);
+    if (answer === "n") {
+      reAsk = items;
+      batch = [];
+    }
+  }
+
+  const keptChecks: PredicateCheck[] = [];
+  const keptSemantics: SemanticCheck[] = [];
+  const demotedFromCarried: SemanticCheck[] = [];
+  for (const item of batch) {
+    if (item.kind === "check") keptChecks.push(item.check);
+    if (item.kind === "semantic") keptSemantics.push(item.check);
+  }
+  for (const item of reAsk) {
+    const verdict = triage.get(item.id);
+    // Items here via a declined batch confirm carry an "unaffected" triage
+    // verdict; only flagged items get the re-ask banner.
+    if (verdict?.reAsk === true) {
+      deps.write(`Re-asking — the edit may affect this clause: ${verdict.reason}`);
+    }
+    if (item.kind === "trigger") {
+      trigger = await interviewTrigger(item.trigger, trajectories, sets, deps);
+    } else if (item.kind === "check") {
+      const { checks, demoted } = await interviewChecks([item.check], trajectories, sets, deps);
+      keptChecks.push(...checks);
+      demotedFromCarried.push(...demoted);
+    } else {
+      keptSemantics.push(...(await interviewSemanticChecks([item.check], deps)));
+    }
+  }
+
+  for (const check of delta.droppedChecks) {
+    deps.write(
+      `note: dropped ${check.type} check "${check.quote}" — its quoted sentence no longer appears in the section.`,
+    );
+  }
+  for (const check of delta.droppedSemanticChecks) {
+    deps.write(
+      `note: dropped semantic check "${check.quote}" — its quoted sentence no longer appears in the section.`,
+    );
+  }
+
+  let newKeptChecks: PredicateCheck[] = [];
+  let demotedFromNew: SemanticCheck[] = [];
+  if (delta.newChecks.length > 0) {
+    const { checks, demoted } = await interviewChecks(delta.newChecks, trajectories, sets, deps);
+    newKeptChecks = checks;
+    demotedFromNew = demoted;
+  }
+  const newSemantics = [...delta.newSemanticChecks, ...demotedFromCarried, ...demotedFromNew];
+  const keptNewSemantics =
+    newSemantics.length > 0 ? await interviewSemanticChecks(newSemantics, deps) : [];
+
+  return {
+    trigger,
+    checks: [...keptChecks, ...newKeptChecks],
+    semanticChecks: [...keptSemantics, ...keptNewSemantics],
+  };
+}
+
 /**
  * Run the diff-scoped update interview against an existing IR. Unchanged
  * sections carry over with zero questions and zero LLM calls; changed and
@@ -459,165 +623,27 @@ export async function runUpdateInterview(
       metaBehaviors.push(entry.meta);
       continue;
     }
-    if (entry.kind === "added") {
-      const proposed = proposals.get(entry.section.heading)!;
-      deps.write(`\n## ${entry.section.heading} — new section.`);
-      const trigger = await interviewTrigger(proposed.trigger, input.trajectories, sets, deps);
-      const { checks, demoted } = await interviewChecks(
-        proposed.checks,
-        input.trajectories,
-        sets,
-        deps,
-      );
-      const semanticChecks = await interviewSemanticChecks(
-        [...proposed.semanticChecks, ...demoted],
-        deps,
-      );
-      pushMeta(entry.section.heading, trigger, checks, semanticChecks, entry.section.body);
-      continue;
-    }
-
-    // Changed section: mechanical delta, then demote-only triage over the
-    // carried clauses, then interview only what needs a human decision.
     const proposed = proposals.get(entry.section.heading)!;
-    deps.write(`\n## ${entry.meta.name} — section changed.`);
-    const delta = computeSectionDelta(entry.meta, proposed, entry.section.body);
-
-    const items: CarriedItem[] = [];
-    if (delta.triggerCarried) {
-      items.push({ id: "trigger", kind: "trigger", trigger: entry.meta.trigger });
-    }
-    delta.carriedChecks.forEach((check, index) => {
-      items.push({ id: `check-${index + 1}`, kind: "check", check });
-    });
-    delta.carriedSemanticChecks.forEach((check, index) => {
-      items.push({ id: `semantic-${index + 1}`, kind: "semantic", check });
-    });
-
-    const triage = new Map<string, TriageVerdict>();
-    if (items.length > 0) {
-      if (entry.meta.source === undefined) {
-        // No recorded previous section text, so the edit's impact can't be
-        // assessed: re-review every carried clause (the safe ceiling).
-        for (const item of items) {
-          triage.set(item.id, {
-            reAsk: true,
-            reason:
-              "the IR did not record the previous section text, so the edit cannot be triaged",
-          });
-        }
-      } else {
-        const verdicts = await completeJsonWithRetry(
-          deps.complete,
-          buildTriageMessages({
-            metaName: entry.meta.name,
-            previousSection: entry.meta.source,
-            currentSection: entry.section.body,
-            items: items.map((item) => ({
-              id: item.id,
-              description: carriedItemDescription(item),
-            })),
-          }),
-          (response) =>
-            parseTriageResult(
-              response,
-              items.map((item) => item.id),
-            ),
-        );
-        for (const [id, verdict] of verdicts) triage.set(id, verdict);
-      }
-    }
-
-    let trigger: Trigger = entry.meta.trigger;
-    if (!delta.triggerCarried) {
-      trigger = await interviewChangedTrigger(
-        entry.meta.trigger,
-        proposed.trigger,
+    let reviewed: ReviewedSection;
+    if (entry.kind === "added") {
+      deps.write(`\n## ${entry.section.heading} — new section.`);
+      reviewed = await reviewAddedSection(proposed, input.trajectories, sets, deps);
+    } else {
+      deps.write(`\n## ${entry.meta.name} — section changed.`);
+      reviewed = await reviewChangedSection(
+        entry.meta,
+        proposed,
+        entry.section,
         input.trajectories,
         sets,
         deps,
       );
     }
-
-    let batch = items.filter((item) => triage.get(item.id)?.reAsk !== true);
-    let reAsk = items.filter((item) => triage.get(item.id)?.reAsk === true);
-    if (batch.length > 0) {
-      deps.write(`Carrying over ${batch.length} clause(s) whose spec sentences are unchanged:`);
-      for (const item of batch) {
-        deps.write(`  ${carriedLabel(item)}`);
-      }
-      const answer = await askChoice(deps, "Keep these? [y] yes / [n] review individually", [
-        "y",
-        "n",
-      ]);
-      if (answer === "n") {
-        reAsk = items;
-        batch = [];
-      }
-    }
-
-    const keptChecks: PredicateCheck[] = [];
-    const keptSemantics: SemanticCheck[] = [];
-    const demotedFromCarried: SemanticCheck[] = [];
-    for (const item of batch) {
-      if (item.kind === "check") keptChecks.push(item.check);
-      if (item.kind === "semantic") keptSemantics.push(item.check);
-    }
-    for (const item of reAsk) {
-      const verdict = triage.get(item.id);
-      // Items here via a declined batch confirm carry an "unaffected" triage
-      // verdict; only flagged items get the re-ask banner.
-      if (verdict?.reAsk === true) {
-        deps.write(`Re-asking — the edit may affect this clause: ${verdict.reason}`);
-      }
-      if (item.kind === "trigger") {
-        trigger = await interviewTrigger(item.trigger, input.trajectories, sets, deps);
-      } else if (item.kind === "check") {
-        const { checks, demoted } = await interviewChecks(
-          [item.check],
-          input.trajectories,
-          sets,
-          deps,
-        );
-        keptChecks.push(...checks);
-        demotedFromCarried.push(...demoted);
-      } else {
-        keptSemantics.push(...(await interviewSemanticChecks([item.check], deps)));
-      }
-    }
-
-    for (const check of delta.droppedChecks) {
-      deps.write(
-        `note: dropped ${check.type} check "${check.quote}" — its quoted sentence no longer appears in the section.`,
-      );
-    }
-    for (const check of delta.droppedSemanticChecks) {
-      deps.write(
-        `note: dropped semantic check "${check.quote}" — its quoted sentence no longer appears in the section.`,
-      );
-    }
-
-    let newKeptChecks: PredicateCheck[] = [];
-    let demotedFromNew: SemanticCheck[] = [];
-    if (delta.newChecks.length > 0) {
-      const { checks, demoted } = await interviewChecks(
-        delta.newChecks,
-        input.trajectories,
-        sets,
-        deps,
-      );
-      newKeptChecks = checks;
-      demotedFromNew = demoted;
-    }
-    const newSemantics = [...delta.newSemanticChecks, ...demotedFromCarried, ...demotedFromNew];
-    const keptNewSemantics =
-      newSemantics.length > 0 ? await interviewSemanticChecks(newSemantics, deps) : [];
-
     pushMeta(
       entry.section.heading,
-      trigger,
-      [...keptChecks, ...newKeptChecks],
-      [...keptSemantics, ...keptNewSemantics],
+      reviewed.trigger,
+      reviewed.checks,
+      reviewed.semanticChecks,
       entry.section.body,
     );
   }

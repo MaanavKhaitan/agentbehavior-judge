@@ -4,6 +4,8 @@
  * by webInterview.test.ts and cli.test.ts; not packed or exported.
  */
 
+import { openSnapshotStream, SnapshotClient } from "./sseTestClient.js";
+
 export interface InterviewSnapshot {
   revision: number;
   behavior: string;
@@ -17,46 +19,9 @@ export interface InterviewSnapshot {
   };
 }
 
-export class InterviewClient {
-  private buffer = "";
-  private readonly decoder = new TextDecoder();
-  private readonly queue: InterviewSnapshot[] = [];
-
-  private constructor(
-    private readonly origin: string,
-    private readonly token: string,
-    private readonly reader: ReadableStreamDefaultReader<Uint8Array>,
-  ) {}
-
+export class InterviewClient extends SnapshotClient<InterviewSnapshot> {
   static async connect(url: string): Promise<InterviewClient> {
-    const parsed = new URL(url);
-    const token = parsed.searchParams.get("token") ?? "";
-    const response = await fetch(`${parsed.origin}/events?token=${encodeURIComponent(token)}`);
-    if (!response.ok || response.body === null) {
-      throw new Error(`events stream connect failed with status ${response.status}`);
-    }
-    return new InterviewClient(parsed.origin, token, response.body.getReader());
-  }
-
-  /** Next snapshot pushed by the server (the connect-time state counts). */
-  async next(): Promise<InterviewSnapshot> {
-    for (;;) {
-      const queued = this.queue.shift();
-      if (queued !== undefined) return queued;
-      const { done, value } = await this.reader.read();
-      if (done) throw new Error("event stream ended before the expected snapshot");
-      this.buffer += this.decoder.decode(value, { stream: true });
-      let boundary: number;
-      while ((boundary = this.buffer.indexOf("\n\n")) !== -1) {
-        const frame = this.buffer.slice(0, boundary);
-        this.buffer = this.buffer.slice(boundary + 2);
-        for (const line of frame.split("\n")) {
-          if (line.startsWith("data: ")) {
-            this.queue.push(JSON.parse(line.slice("data: ".length)) as InterviewSnapshot);
-          }
-        }
-      }
-    }
+    return new InterviewClient(await openSnapshotStream(url));
   }
 
   /** Next snapshot whose state is a step (skips the loading screen). */
@@ -70,26 +35,12 @@ export class InterviewClient {
     }
   }
 
-  async answer(stepId: number, answer: unknown): Promise<number> {
-    const response = await fetch(`${this.origin}/answer?token=${encodeURIComponent(this.token)}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ stepId, answer }),
-    });
-    await response.arrayBuffer();
-    return response.status;
+  answer(stepId: number, answer: unknown): Promise<number> {
+    return this.post("/answer", { stepId, answer });
   }
 
-  async back(): Promise<number> {
-    const response = await fetch(`${this.origin}/back?token=${encodeURIComponent(this.token)}`, {
-      method: "POST",
-    });
-    await response.arrayBuffer();
-    return response.status;
-  }
-
-  close(): void {
-    void this.reader.cancel().catch(() => {});
+  back(): Promise<number> {
+    return this.post("/back");
   }
 }
 
