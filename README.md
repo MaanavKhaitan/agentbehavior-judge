@@ -1,3 +1,5 @@
+![behavior-judge logo](docs/assets/logo.png)
+
 # behavior-judge
 
 Compile an [Agent Behavior](https://github.com/braintrustdata/agentbehavior) spec into an
