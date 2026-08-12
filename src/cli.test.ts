@@ -9,6 +9,7 @@ import { parseIr } from "./ir.js";
 import type { TrajectoryJudgment } from "./judge.js";
 import { taxCase } from "./taxFixtures.js";
 import { driveInterview, type InterviewSnapshot } from "./webInterviewTestClient.js";
+import { watchReport, type ReportSnapshot } from "./webReportTestClient.js";
 
 let temporaryDirectories: string[] = [];
 
@@ -140,6 +141,57 @@ describe("behavior-judge judge", () => {
     expect(stdout).toContain("[event-2]");
   });
 
+  it("serves the report on a local browser server with --web", async () => {
+    const directory = await writeFixtures({
+      "judge.yaml": predicateOnlyIr,
+      "trajectories.json": JSON.stringify([
+        taxCase("secondary-then-primary").trajectory,
+        taxCase("skill-read-too-late").trajectory,
+      ]),
+    });
+
+    // The browser stand-in watches the SSE stream and acks the final report
+    // as soon as the CLI "opens" the URL — that ack is what lets main return.
+    let browserRun: Promise<ReportSnapshot[]> | undefined;
+    const deps: CliDeps = {
+      openBrowser: (url) => {
+        browserRun = watchReport(url);
+      },
+    };
+
+    const { exitCode, stdout } = await captureMain(
+      [
+        "judge",
+        path.join(directory, "judge.yaml"),
+        path.join(directory, "trajectories.json"),
+        "--no-verify",
+        "--web",
+      ],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Report running at http://127.0.0.1:");
+    // The plain-text report still lands in the terminal after the page acks.
+    expect(stdout).toContain("secondary-then-primary: true");
+    expect(stdout).toContain("skill-read-too-late: false");
+    const report = (await browserRun!).at(-1)!;
+    expect(report.state.type).toBe("report");
+    expect(report.state.judgments).toHaveLength(2);
+  });
+
+  it("rejects --web combined with --json", async () => {
+    const { exitCode, stderr } = await captureMain([
+      "judge",
+      "judge.yaml",
+      "trajectories.json",
+      "--web",
+      "--json",
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--web and --json cannot be combined");
+  });
+
   it("errors when the IR or trajectory arguments are missing", async () => {
     const { exitCode, stderr } = await captureMain(["judge"]);
     expect(exitCode).toBe(1);
@@ -238,6 +290,17 @@ describe("behavior-judge calibrate", () => {
     expect(exitCode).toBe(1);
     expect(stdout).toContain("MISMATCH");
     expect(stdout).toContain("meta agreement 0/1, file agreement 0/1");
+  });
+
+  it("rejects --web for calibrate", async () => {
+    const { exitCode, stderr } = await captureMain([
+      "calibrate",
+      "judge.yaml",
+      "trajectories.json",
+      "--web",
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--web is not supported with calibrate");
   });
 
   it("errors when a trajectory has no expected verdicts", async () => {

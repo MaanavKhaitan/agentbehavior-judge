@@ -17,7 +17,7 @@ hand-building judging machinery. `behavior-judge` closes that gap:
 
 ```
 behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--web]
-behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
+behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify] [--web]
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 ```
 
@@ -134,6 +134,14 @@ The first meta-behavior fails deterministically — event-2 is a source open wit
 skill read — with no LLM in the loop. With `BRAINTRUST_API_KEY` set, drop `--no-verify`:
 the verifier confirms the violation, the semantic trigger for the second meta-behavior
 fires, and its clauses get judged too.
+
+With `--web` the same report renders in your browser: the CLI starts a local-only
+server (127.0.0.1, one-time token in the URL), opens the page, and shows one card per
+run — cards appear live as runs are judged — with plain-language verdicts, each rule
+expandable down to its clauses, and the deciding events quoted as evidence. The page
+tells the terminal once it has rendered, the server shuts down, and the plain-text
+report above still prints. `--web` combines with everything except `--json` (pick one
+format) and is not available for `calibrate` yet.
 
 To measure the IR against trajectories with known verdicts (with `BRAINTRUST_API_KEY`
 set — the semantic clauses need the LLM to reach the expected verdicts):

@@ -42,7 +42,7 @@ gateway client derive from that repo's examples.
 
 ```
 behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--web]
-behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
+behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify] [--web]
 behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 ```
 
@@ -51,7 +51,9 @@ disagreement (CI gate); `generate` 1 if the user declines the final confirm. Err
 `generate --update <ir.yaml>` is the diff-scoped re-interview after a spec edit (§10);
 `--out` then defaults to the `--update` path. `generate --web` serves the interview to
 a browser instead of readline (§10a); it combines with `--update` (the update interview
-adds two step kinds the page renders, §10a).
+adds two step kinds the page renders, §10a). `judge --web` serves the report to a
+browser (§10b); it rejects `--json` (one format at a time), and `calibrate` does not
+support `--web` yet.
 
 ## 4. Source map (`src/`, dependency order)
 
@@ -112,11 +114,17 @@ expected}` wrapper, or array of either; rejects duplicate event IDs).
   (inline CSS/JS in one template literal; the embedded script avoids backticks and
   `${` so the literal needs no escaping; all dynamic text rendered via DOM APIs, never
   innerHTML).
+- `webReport.ts` — the `judge --web` server: same 127.0.0.1/one-time-token/SSE posture
+  as `webInterview.ts`; pushes per-case judging progress then the final report, and
+  blocks until the page posts `/ack` (§10b). Judging stays in judge.ts (the CLI passes
+  a `judgeCase` seam). CLI-only concern, not exported from `index.ts`.
+- `webReportPage.ts` — the single-file report page served by `webReport.ts`; same
+  conventions and visual language as `webInterviewPage.ts`.
 - `cli.ts` — dispatch, report formatting, readline wiring, browser opener, `CliDeps`
   injection.
-- `index.ts` — public exports. `taxFixtures.ts`, `webInterviewTestClient.ts` — test-only
-  helpers (tax cases as TS data; SSE/answer client standing in for the browser page).
-  Neither is packed/exported.
+- `index.ts` — public exports. `taxFixtures.ts`, `webInterviewTestClient.ts`,
+  `webReportTestClient.ts` — test-only helpers (tax cases as TS data; SSE clients
+  standing in for the two browser pages). None are packed/exported.
 
 ## 5. Event schema (tool convention, NOT part of the standard)
 
@@ -346,6 +354,30 @@ shape: `runUpdateProposalInterview` speaking to an `UpdatePresenter`, with
 - Aborting: cancel on the confirm card → done screen, `Aborted; nothing written.`,
   exit 1 (same as declining `[y/n]`). Ctrl-C in the terminal kills the server outright.
 
+## 10b. `judge --web` (browser report over the same server posture)
+
+- `runWebReport` (webReport.ts): binds 127.0.0.1 on a random port, prints the token
+  URL, opens the browser, then judges the cases one at a time through the CLI's
+  `judgeCase` seam (so `--model`/`--no-verify` and the stderr progress lines work
+  unchanged). SSE states: `judging` `{done, total, judgingId, judgments-so-far}` per
+  case → `report` → `error`. Judgments are append-only across snapshots, so the page
+  renders cards incrementally and never re-renders one (user-opened rows survive).
+- **Ack handshake**: the page posts `/ack` once the final report has rendered (409
+  before the report state exists); that resolves `runWebReport`, the server shuts
+  down, and the CLI prints the plain-text report to stdout as the durable copy. No
+  browser → the CLI blocks, like an unanswered interview; Ctrl-C aborts.
+- The payload is humanized code-side, never trusting the page with raw internals:
+  predicate clauses are zipped in order with the IR meta's checks to recover each
+  check's type, trigger descriptions ride along from the IR, and citations are
+  enriched with the cited event's actor/action/content (clipped to 200)/metadata.
+  Predicate citation descriptions (generated boilerplate) are dropped; model-written
+  ones (semantic clauses, overturned verdicts) are kept.
+- The page: one card per run with pass/fail/no-verdict pills, an amber strip for
+  incomplete runs, a details row per rule (failing rules pre-opened, trigger shown as
+  "applies when"), per-clause verdict marks with plain-language check-type tags,
+  verification notes, model reasoning, and cited events in the dark evidence panel.
+  Event ids are shown here (a report is provenance), unlike the interview page.
+
 Three example dirs under `examples/`, each holding `BEHAVIOR.md`, a checked-in
 `judge.yaml`, and labeled `{trajectory, expected}` JSONs under `trajectories/` —
 ready-to-run CLI inputs for `generate`/`judge`/`calibrate`. All three `judge.yaml`s
@@ -425,11 +457,17 @@ Test suite (zero network, `queuedCompletion` fake returning scripted JSON):
   exactly one triage), batch-decline fall-through, unchanged-spec confirm-only path,
   cancel-writes-nothing, token 403s, stale/malformed answer 409/400s, server teardown
   on proposal failure.
+- `webReport.test.ts` — real loopback HTTP against `runWebReport` via
+  `webReportTestClient.ts`: gated judging→report snapshot flow, payload enrichment
+  (check types, cited-event content, predicate boilerplate dropped vs model
+  descriptions kept, untriggered-meta trigger clauses), premature-ack 409, token 403s,
+  error-state push and server teardown on judging failure.
 - `cli.test.ts` — `captureMain` + `mkdtemp` temp dirs for all three commands, exit codes,
   help/version/unknown-command, `generate --update` (in-place, zero-call unchanged path),
-  `--web` end-to-end through the `openBrowser` seam (browser stand-in drives the
-  interview over HTTP while `main` blocks), and `--web --update` end-to-end (zero-call
-  unchanged path through the browser).
+  generate and judge `--web` end-to-end through the `openBrowser` seam (browser stand-ins
+  drive the interview / ack the report over HTTP while `main` blocks), `--web --update`
+  end-to-end (zero-call unchanged path through the browser), and the `--web`/`--json`
+  and `calibrate --web` rejections.
 
 ## 12. Extension points
 

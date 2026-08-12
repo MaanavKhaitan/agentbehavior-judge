@@ -10,6 +10,7 @@ import { applyNearestDotEnv } from "./env.js";
 import { runInterview } from "./generate.js";
 import { runUpdateInterview } from "./update.js";
 import { runWebInterview, runWebUpdateInterview } from "./webInterview.js";
+import { runWebReport } from "./webReport.js";
 import { completeWithBraintrustGateway, type JudgeCompletion } from "./gateway.js";
 import {
   compareToExpected,
@@ -30,7 +31,7 @@ export interface CliDeps {
    * workspace `.env` never leaks into `process.env`.
    */
   loadEnv?: () => Promise<void>;
-  /** Replaces the platform browser opener for `generate --web`; tests use it to reach the URL. */
+  /** Replaces the platform browser opener for `--web` runs; tests use it to reach the URL. */
   openBrowser?: (url: string) => void;
 }
 
@@ -82,7 +83,7 @@ function usage(): string {
 
 Usage:
   behavior-judge generate  <behavior-path> <trajectory.json ...> [--update <ir.yaml>] [--out <file>] [--model <m>] [--web]
-  behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
+  behavior-judge judge     <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify] [--web]
   behavior-judge calibrate <ir.yaml> <trajectory.json ...> [--json] [--model <m>] [--no-verify]
 
 generate interviews you through compiling a BEHAVIOR.md into a judge.yaml IR,
@@ -92,8 +93,11 @@ unchanged sections carry over without questions, and the interview covers only
 changed, added, and removed sections (--out defaults to the --update file).
 With --web the interview — plain or --update — runs in your browser on a
 local-only server (127.0.0.1, one-time token); the terminal prints the URL and
-still writes the file. judge runs an IR over trajectory JSON files. calibrate compares judge
-verdicts against expected verdicts recorded in the trajectory files.
+still writes the file. judge runs an IR over trajectory JSON files; with --web
+the report renders in your browser on the same kind of local-only server, and
+the CLI exits once the page has loaded (the plain-text report still prints to
+the terminal). calibrate compares judge verdicts against expected verdicts
+recorded in the trajectory files.
 
 Trajectory JSON files contain a trajectory ({id, complete, events}), a
 {trajectory, expected} wrapper, or an array of either.
@@ -186,19 +190,21 @@ async function runJudgeCommand(options: JudgeCommandOptions): Promise<number> {
     return 1;
   }
 
+  if (args.web && options.calibrate) {
+    process.stderr.write(
+      "error: --web is not supported with calibrate yet; run judge --web for the browser report.\n",
+    );
+    return 1;
+  }
+  if (args.web && args.json) {
+    process.stderr.write("error: --web and --json cannot be combined; pick one report format.\n");
+    return 1;
+  }
+
   const ir = await loadIrFile(irPath);
   const cases = await loadCases(trajectoryFiles);
 
-  const judgments: TrajectoryJudgment[] = [];
-  const comparisons: JudgmentComparison[] = [];
-
-  for (const [index, trajectoryCase] of cases.entries()) {
-    if (options.calibrate && trajectoryCase.expected === undefined) {
-      process.stderr.write(
-        `error: calibrate requires expected verdicts; trajectory ${trajectoryCase.trajectory.id} (case ${index}) has none.\n`,
-      );
-      return 1;
-    }
+  const judgeCase = (trajectoryCase: TrajectoryCase, index: number) => {
     // Progress goes to stderr so --json stdout stays machine-readable.
     process.stderr.write(
       `Judging ${trajectoryCase.trajectory.id} (${index + 1}/${cases.length})...\n`,
@@ -210,7 +216,33 @@ async function runJudgeCommand(options: JudgeCommandOptions): Promise<number> {
     };
     if (deps.complete !== undefined) judgeOptions.complete = deps.complete;
     if (args.model !== undefined) judgeOptions.gateway = { model: args.model };
-    const judgment = await judgeTrajectory(judgeOptions);
+    return judgeTrajectory(judgeOptions);
+  };
+
+  if (args.web) {
+    const judgments = await runWebReport({
+      ir,
+      cases,
+      judgeCase,
+      log: (line) => process.stdout.write(`${line}\n`),
+      openBrowser: deps.openBrowser ?? openBrowserCommand,
+    });
+    // The server is gone once the page acks; keep a durable copy in the terminal.
+    process.stdout.write(`${judgments.map(formatJudgment).join("\n\n")}\n`);
+    return 0;
+  }
+
+  const judgments: TrajectoryJudgment[] = [];
+  const comparisons: JudgmentComparison[] = [];
+
+  for (const [index, trajectoryCase] of cases.entries()) {
+    if (options.calibrate && trajectoryCase.expected === undefined) {
+      process.stderr.write(
+        `error: calibrate requires expected verdicts; trajectory ${trajectoryCase.trajectory.id} (case ${index}) has none.\n`,
+      );
+      return 1;
+    }
+    const judgment = await judgeCase(trajectoryCase, index);
     judgments.push(judgment);
     if (trajectoryCase.expected !== undefined) {
       comparisons.push(compareToExpected(judgment, trajectoryCase.expected));
