@@ -1,42 +1,65 @@
 ![behavior-judge logo](docs/assets/logo.png)
 
-[GITHUB REPO status here]
+[![CI](https://github.com/MaanavKhaitan/behavior-judge/actions/workflows/ci.yml/badge.svg)](https://github.com/MaanavKhaitan/behavior-judge/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Node >=20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
 
 Long-horizon agents are hard to evaluate. [Agent Behavior](https://github.com/braintrustdata/agentbehavior) specs tackle this by observing the process agents take to get to outcomes. `behavior-judge` compiles an Agent Behavior spec into an executable judge for long-horizon agent trajectories, with deterministic checks for most common agent behaviors.
 
 ## Why
 
-Real-world tasks run for days or weeks, are not easily verifiable, and an agent can reach the right answer through the wrong process (i.e. a tax agent answering from pretraining instead of verifying
+Real-world tasks are not easily verifiable and an agent can reach the right answer through the wrong process (i.e. a tax agent answering from pretraining instead of verifying
 against primary sources still passes an outcome eval). The
 [Agent Behavior standard](https://github.com/braintrustdata/agentbehavior), open-sourced
 by [Braintrust](https://www.braintrust.dev) and [Basis](https://www.getbasis.ai/)
 ([launch thread](https://x.com/mitch_troy/status/2082513195357307158)), tackles this
-with process supervision: write down how the agent should behave in a freeform
+with process supervision: write down how the agent should behave in a natural-language
 `BEHAVIOR.md` and ask a model to judge trajectories against it.
 
-[DIAGRAM HERE of agent behavior data flow]
+![Agent Behavior data flow: a behavior spec and agent trajectories feed an LLM judge, which produces a verdict](docs/assets/llm-judge-simple.svg)
 
 We notice a pattern: most behaviors we expect from long-horizon agents codify into a common set of checks over trajectory events. For example, checking the agent does X before Y, or ensuring the agent never does X.
 
-[DIAGRAM HERE of most common checks]
+![Some common agent behavior checks over trajectory events: ordering (X must come before Y), forbidden, and count](docs/assets/behavior-checks.svg)
 
-`behavior-judge` builds on the Agent Behavior project by taking a behavior spec + agent trajectories as input and compiling them into a YAML representation of deterministic rules. Judging becomes more consistent from run to run, with the LLM confined to the few narrowly scoped checks that need semantic judgement. Every verdict is backed with evidence from the spec and trajectory events.
+`behavior-judge` builds on the Agent Behavior project by taking a behavior spec + agent trajectories as input and compiling them into a YAML representation of deterministic rules. Judging becomes more consistent from run to run, confining the LLM to the few narrowly scoped checks that need semantic judgement. Every verdict is backed with evidence from the spec and trajectory events.
 
-[DIAGRAM HERE of behavior-judge data flow]
+![behavior-judge data flow: a behavior spec and sample trajectories are compiled via an LLM into a judge YAML intermediate representation, which a deterministic judge program runs over trajectories, calling an LLM only for semantic checks, to produce a verdict](docs/assets/llm-judge-pipeline.svg)
 
-Codifying semantic judges into deterministic checks can help make the loops that evaluate and improve agents become more easily verifiable.
+Codifying semantic judges into mechanical checks can help make the loops that evaluate and improve agents more easily verifiable.
 
 ## The checks
 
-A compiled judge is a list of rules, each with a **trigger** ("does this rule apply
-here at all?") and two kinds of checks:
+A compiled judge is a list of rules, each with two kinds of checks:
 
-- **Five deterministic predicates** over trajectory events: `ordering` (X before Y),
+- Five deterministic predicates over trajectory events: `ordering` (X before Y),
   `pairing` (every X later followed by Y), `required`, `forbidden`, and `count`
-  (min/max, optionally over distinct values), plus an `after:` scope for "once X
-  happens…" clauses.
-- **Semantic checks**: one narrowly scoped LLM question per clause that no event
+  (min/max, optionally over distinct values). For those interested in runtime verification, this might remind you of property-specification patterns!
+- Semantic checks: one narrowly scoped LLM question per clause that no event
   pattern can express ("does the answer rely on the source it read?").
+
+## How it compares to an LLM-only judge
+
+We ran `behavior-judge` head-to-head against a judge that evaluates the whole spec in
+one monolithic LLM call, over the two deterministic-only
+examples below — 10 runs per judge, same model (`gpt-5-mini`).
+
+| Metric                         | `behavior-judge` | One-call LLM judge |
+| ------------------------------ | ---------------- | ------------------ |
+| Rule verdicts correct          | 720/720 (100%)   | 682/720 (94.7%)    |
+| Perfect runs                   | 20/20            | 3/20               |
+| Verdicts unanimous across runs | 72/72            | 58/72              |
+
+`behavior-judge`'s verdicts were byte-identical across all twenty runs. The LLM-only
+judge lost points in three places (note: the examples lean toward cases that would trip up an LLM-only judge, like long sessions and incomplete traces):
+
+- calling clauses non-applicable even when the spec explicitly said an empty session satisfies
+- incomplete traces, where it applied opposite conventions on different runs of the same input
+- failing its own output validation and unable to produce verbatim evidence from the spec
+
+The gap is more on run-to-run reliability, not domain reasoning.
+Methodology and per-case miss lists live in the example READMEs and
+[docs/DETAILS.md](docs/DETAILS.md).
 
 ## Running `behavior-judge`
 
@@ -63,7 +86,7 @@ behavior-judge generate  <behavior-path> <trajectory.json ...> [--out <file>]
 
 Reads your behavior spec + sample trajectories to determine how to compile your desired agent behaviors to deterministic checks. It then drafts a judge and runs an in-browser interview with you to confirm the relevant checks and event vocabulary your trajectories actually use. Writes `judge.yaml` next to the spec.
 
-[SCREENSHOT OF THE GENERATE PAGE]
+![The generate web interview reviewing an ordering check](docs/assets/generate-web-interview.png)
 
 ### Run the judge on agent trajectories
 
@@ -73,7 +96,7 @@ behavior-judge judge  <ir.yaml> <trajectory.json ...> [--json]
 
 Runs a judge over trajectories. Deterministic checks are free; the LLM handles semantic clauses + confirming failures of any deterministic checks. The report renders in your browser by default.
 
-[SCREENSHOT OF THE JUDGE REPORT]
+![The judge web report showing a failed run with a confirmed forbidden-check violation](docs/assets/judge-web-report.png)
 
 ### Update the judge after behavior spec changes
 

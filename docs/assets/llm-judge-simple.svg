@@ -1,0 +1,36 @@
+<svg viewBox="0 0 1200 640" xmlns="http://www.w3.org/2000/svg" font-family="Poppins, 'Avenir Next', 'Nunito Sans', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+  <!-- behavior-judge palette: cream #F7F4EC · slate #35414B · sage #7E9C6F · taupe #CBC1AD -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0.5,0.8 L9.2,5 L0.5,9.2 Z" fill="#46525C"/>
+    </marker>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="2.5" flood-color="#3A4650" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="640" fill="#F7F4EC"/>
+
+  <!-- Behavior spec -->
+  <rect x="90" y="80" width="270" height="180" rx="20" fill="#FFFFFF" stroke="#DFD7C7" stroke-width="1.5" filter="url(#soft)"/>
+  <text x="225" y="177" text-anchor="middle" font-size="24" font-weight="600" fill="#35414B">Behavior spec</text>
+
+  <!-- Agent trajectories -->
+  <rect x="90" y="380" width="270" height="180" rx="20" fill="#FFFFFF" stroke="#DFD7C7" stroke-width="1.5" filter="url(#soft)"/>
+  <text x="225" y="462" text-anchor="middle" font-size="24" font-weight="600" fill="#35414B">Agent trajectories</text>
+  <rect x="155" y="486" width="140" height="7" rx="3.5" fill="#CBC1AD"/>
+  <rect x="140" y="508" width="170" height="7" rx="3.5" fill="#CBC1AD"/>
+
+  <!-- LLM judge (diamond) -->
+  <rect x="565" y="235" width="170" height="170" rx="22" fill="#E4EBD8" stroke="#7E9C6F" stroke-width="2" transform="rotate(45 650 320)" filter="url(#soft)"/>
+  <text x="650" y="328" text-anchor="middle" font-size="23" font-weight="600" fill="#46603C">LLM judge</text>
+
+  <!-- Verdict -->
+  <circle cx="1030" cy="320" r="64" fill="#7E9C6F" filter="url(#soft)"/>
+  <text x="1030" y="328" text-anchor="middle" font-size="22" font-weight="600" fill="#FCFBF6">Verdict</text>
+
+  <!-- Connectors -->
+  <line x1="372" y1="182" x2="560" y2="272" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <line x1="372" y1="458" x2="560" y2="368" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <line x1="785" y1="320" x2="950" y2="320" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+</svg>
