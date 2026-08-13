@@ -22,7 +22,7 @@ We notice a pattern: most behaviors we expect from long-horizon agents codify in
 
 ![Some common agent behavior checks over trajectory events: ordering (X must come before Y), forbidden, and count](docs/assets/behavior-checks.svg)
 
-`behavior-judge` builds on the Agent Behavior project by taking a behavior spec + agent trajectories as input and compiling them into a YAML representation of deterministic rules. Judging becomes more consistent from run to run, confining the LLM to the few narrowly scoped checks that need semantic judgement. Every verdict is backed with evidence from the spec and trajectory events.
+`behavior-judge` builds on the Agent Behavior project by taking a behavior spec + agent trajectories as input and compiling them into deterministic rules. Judging becomes more consistent from run to run, confining the LLM to the few narrowly scoped checks that need semantic judgement. Every verdict is backed with evidence from the spec and trajectory events.
 
 ![behavior-judge data flow: a behavior spec and sample trajectories are compiled via an LLM into a judge YAML intermediate representation, which a deterministic judge program runs over trajectories, calling an LLM only for semantic checks, to produce a verdict](docs/assets/llm-judge-pipeline.svg)
 
@@ -30,7 +30,7 @@ Codifying semantic judges into mechanical checks can help make the loops that ev
 
 ## The checks
 
-A compiled judge is a list of rules, each with two kinds of checks:
+A compiled judge is a YAML representation of rules, each with two kinds of checks:
 
 - Five deterministic predicates over trajectory events: `ordering` (X before Y),
   `pairing` (every X later followed by Y), `required`, `forbidden`, and `count`
@@ -51,13 +51,13 @@ examples below — 10 runs per judge, same model (`gpt-5-mini`).
 | Verdicts unanimous across runs | 72/72            | 58/72              |
 
 `behavior-judge`'s verdicts were byte-identical across all twenty runs. The LLM-only
-judge lost points in three places (note: the examples lean toward cases that would trip up an LLM-only judge, like long sessions and incomplete traces):
+judge lost points on run-to-run reliability (note: the examples lean toward cases that would trip up an LLM-only judge, like long sessions and incomplete traces):
 
+- applying opposite conventions on different runs of the same input
 - calling clauses non-applicable even when the spec explicitly said an empty session satisfies
-- incomplete traces, where it applied opposite conventions on different runs of the same input
 - failing its own output validation and unable to produce verbatim evidence from the spec
 
-The gap is more on run-to-run reliability, not domain reasoning.
+Using a frontier model for the LLM-judge might address these issues, but we still expect to see cost and latency advantages with `behavior-judge`.
 Methodology and per-case miss lists live in the example READMEs and
 [docs/DETAILS.md](docs/DETAILS.md).
 

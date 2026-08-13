@@ -36,8 +36,14 @@
   <text x="1230" y="137" text-anchor="middle" font-size="21" font-weight="600" fill="#35414B">Trajectories to judge</text>
 
   <!-- Judge program -->
-  <rect x="1090" y="290" width="280" height="160" rx="20" fill="#24292D" filter="url(#soft2)"/>
-  <text x="1230" y="377" text-anchor="middle" font-size="22" font-weight="600" fill="#F6F3EA">Judge program</text>
+  <rect x="1090" y="278" width="280" height="218" rx="20" fill="#24292D" filter="url(#soft2)"/>
+  <text x="1230" y="322" text-anchor="middle" font-size="22" font-weight="600" fill="#F6F3EA">Judge program</text>
+  <!-- nested deterministic checks diamond -->
+  <rect x="1185" y="369" width="90" height="90" rx="12" fill="#F1EDE2" stroke="#D9D0BC" stroke-width="1.5" transform="rotate(45 1230 414)"/>
+  <text x="1230" y="406" text-anchor="middle" font-size="13.5" font-weight="600" fill="#35414B">Deterministic</text>
+  <text x="1230" y="424" text-anchor="middle" font-size="13.5" font-weight="600" fill="#35414B">checks</text>
+  <path d="M 1238 444 A 8 8 0 1 1 1230 436" fill="none" stroke="#35414B" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M 1230 431.2 L 1238.8 436 L 1230 440.8 Z" fill="#35414B"/>
 
   <!-- LLM for semantic checks (diamond) -->
   <rect x="1165" y="575" width="130" height="130" rx="16" fill="#E4EBD8" stroke="#7E9C6F" stroke-width="2" transform="rotate(45 1230 640)" filter="url(#soft2)"/>
@@ -54,9 +60,9 @@
   <line x1="322" y1="505" x2="424" y2="418" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
   <line x1="578" y1="370" x2="648" y2="370" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
   <line x1="942" y1="370" x2="1078" y2="370" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
-  <line x1="1230" y1="192" x2="1230" y2="278" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
+  <line x1="1230" y1="192" x2="1230" y2="266" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
   <line x1="1382" y1="370" x2="1528" y2="370" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
   <!-- loop between judge program and semantic-check LLM -->
-  <line x1="1180" y1="462" x2="1180" y2="578" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
-  <line x1="1280" y1="578" x2="1280" y2="462" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
+  <line x1="1180" y1="508" x2="1180" y2="588" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
+  <line x1="1280" y1="588" x2="1280" y2="508" stroke="#46525C" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow2)"/>
 </svg>

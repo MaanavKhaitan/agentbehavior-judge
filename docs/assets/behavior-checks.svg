@@ -12,7 +12,7 @@
   <rect width="1760" height="680" fill="#F7F4EC"/>
 
   <!-- Header -->
-  <text x="880" y="105" text-anchor="middle" font-size="28" font-weight="600" letter-spacing="4" fill="#35414B">SOME COMMON AGENT BEHAVIOR CHECKS</text>
+  <text x="880" y="105" text-anchor="middle" font-size="30" font-weight="600" letter-spacing="0.5" fill="#35414B">Some common agent behavior checks</text>
 
   <!-- ============ Card 1 · Ordering ============ -->
   <rect x="90" y="170" width="460" height="420" rx="24" fill="#FFFFFF" stroke="#DFD7C7" stroke-width="1.5" filter="url(#soft3)"/>
