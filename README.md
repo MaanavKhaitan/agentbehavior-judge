@@ -16,7 +16,7 @@ with process supervision: write down how the agent should behave in a freeform
 
 [DIAGRAM HERE of agent behavior data flow]
 
-We notice a pattern: most behaviors we expect from long-horizon agents codify into a common set of checks over trajectory events. For example, checking the agent does X before Y, or ensuring the agent never does X. 
+We notice a pattern: most behaviors we expect from long-horizon agents codify into a common set of checks over trajectory events. For example, checking the agent does X before Y, or ensuring the agent never does X.
 
 [DIAGRAM HERE of most common checks]
 
@@ -37,6 +37,29 @@ here at all?") and two kinds of checks:
   happens…" clauses.
 - **Semantic checks**: one narrowly scoped LLM question per clause that no event
   pattern can express ("does the answer rely on the source it read?").
+
+## How it compares to an LLM-only judge
+
+We ran `behavior-judge` head-to-head against a judge that evaluates the whole spec in
+one monolithic LLM call, over the two deterministic-only
+examples below — 10 runs per judge, same model (`gpt-5-mini`).
+
+| Metric                         | `behavior-judge` | One-call LLM judge |
+| ------------------------------ | ---------------- | ------------------ |
+| Rule verdicts correct          | 720/720 (100%)   | 682/720 (94.7%)    |
+| Perfect runs                   | 20/20            | 3/20               |
+| Verdicts unanimous across runs | 72/72            | 58/72              |
+
+`behavior-judge`'s verdicts were byte-identical across all twenty runs. The LLM-only
+judge lost points in three places (note: the examples lean toward cases that would trip up an LLM-only judge, like long sessions and incomplete traces):
+
+- calling clauses non-applicable even when the spec explicitly said an empty session satisfies
+- incomplete traces, where it applied opposite conventions on different runs of the same input
+- failing its own output validation and unable to produce verbatim evidence from the spec
+
+The gap is more on run-to-run reliability, not domain reasoning.
+Methodology and per-case miss lists live in the example READMEs and
+[docs/DETAILS.md](docs/DETAILS.md).
 
 ## Running `behavior-judge`
 
