@@ -16,7 +16,7 @@ with process supervision: write down how the agent should behave in a freeform
 
 [DIAGRAM HERE of agent behavior data flow]
 
-We notice a pattern: most behaviors we expect from long-horizon agents codify into a common set of checks over trajectory events. For example, checking the agent does X before Y, or ensuring the agent never does X. 
+We notice a pattern: most behaviors we expect from long-horizon agents codify into a common set of checks over trajectory events. For example, checking the agent does X before Y, or ensuring the agent never does X.
 
 [DIAGRAM HERE of most common checks]
 

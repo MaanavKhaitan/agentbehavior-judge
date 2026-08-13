@@ -77,16 +77,21 @@ export const INTERVIEW_PAGE_HTML = `<!doctype html>
   }
 
   .masthead { text-align: center; margin-bottom: 30px; }
-  .kicker {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--faint);
-  }
-  .masthead-title {
-    margin-top: 6px;
-    font-size: 18px;
+  .brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    font-size: 17px;
     font-weight: 650;
     letter-spacing: -0.01em;
+  }
+  .brand svg { display: block; }
+  .masthead-title {
+    margin-top: 5px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--muted);
   }
   .progress {
     margin: 18px auto 0;
@@ -605,7 +610,21 @@ export const INTERVIEW_PAGE_HTML = `<!doctype html>
 <body>
 <div class="shell">
   <header class="masthead">
-    <div class="kicker">behavior-judge</div>
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <circle cx="4" cy="4" r="2" fill="#3a4551"></circle>
+        <circle cx="20" cy="4" r="2" fill="#3a4551"></circle>
+        <circle cx="4" cy="20" r="2" fill="#3a4551"></circle>
+        <circle cx="20" cy="20" r="2" fill="#3a4551"></circle>
+        <rect x="8.5" y="2.4" width="7" height="3.2" rx="1.6" fill="#85a377"></rect>
+        <rect x="8.5" y="18.4" width="7" height="3.2" rx="1.6" fill="#85a377"></rect>
+        <rect x="2.4" y="8.5" width="3.2" height="7" rx="1.6" fill="#a89a8c"></rect>
+        <rect x="18.4" y="8.5" width="3.2" height="7" rx="1.6" fill="#a89a8c"></rect>
+        <circle cx="12" cy="12" r="5.6" fill="#85a377"></circle>
+        <path d="M9.3 12.2l1.9 1.9 3.7-4.2" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+      <span>behavior-judge</span>
+    </div>
     <div class="masthead-title" id="behaviorName">&nbsp;</div>
     <div class="progress" aria-hidden="true"><div class="progress-fill" id="progressFill"></div></div>
   </header>
