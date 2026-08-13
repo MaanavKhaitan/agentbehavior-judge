@@ -83,10 +83,23 @@ export const REPORT_PAGE_HTML = `<!doctype html>
     font-size: 17px;
     font-weight: 650;
     letter-spacing: -0.01em;
+    color: var(--slate-ink);
   }
   .brand svg { display: block; }
+  .brand-tag {
+    margin-left: 2px;
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 99px;
+    background: var(--slate-bg);
+    border: 1px solid var(--slate-line);
+  }
   .masthead-title {
-    margin-top: 5px;
+    margin-top: 10px;
     font-size: 14px;
     font-weight: 500;
     color: var(--muted);
@@ -364,7 +377,7 @@ export const REPORT_PAGE_HTML = `<!doctype html>
 <div class="shell">
   <header class="masthead">
     <div class="brand">
-      <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <circle cx="4" cy="4" r="2" fill="#3a4551"></circle>
         <circle cx="20" cy="4" r="2" fill="#3a4551"></circle>
         <circle cx="4" cy="20" r="2" fill="#3a4551"></circle>
@@ -376,7 +389,8 @@ export const REPORT_PAGE_HTML = `<!doctype html>
         <circle cx="12" cy="12" r="5.6" fill="#85a377"></circle>
         <path d="M9.3 12.2l1.9 1.9 3.7-4.2" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
       </svg>
-      <span>behavior-judge report</span>
+      <span>behavior-judge</span>
+      <span class="brand-tag">Report</span>
     </div>
     <div class="masthead-title" id="behaviorName">&nbsp;</div>
     <div class="stats" id="stats"></div>
