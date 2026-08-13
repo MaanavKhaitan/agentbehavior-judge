@@ -611,7 +611,7 @@ export const INTERVIEW_PAGE_HTML = `<!doctype html>
 <div class="shell">
   <header class="masthead">
     <div class="brand">
-      <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <circle cx="4" cy="4" r="2" fill="#3a4551"></circle>
         <circle cx="20" cy="4" r="2" fill="#3a4551"></circle>
         <circle cx="4" cy="20" r="2" fill="#3a4551"></circle>
